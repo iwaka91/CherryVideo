@@ -16,6 +16,8 @@ if [[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" == "1" ]]; then
   adb shell wm size 480x854
   adb shell wm density 160
   adb emu avd hostmicon
+  pactl --server=tcp:127.0.0.1:4713 info > "$evidence_path/host-audio.txt" || true
+  cp /tmp/cherry-tone.log "$evidence_path/host-tone.txt" || true
 fi
 bash gradlew --no-daemon :app:connectedDebugAndroidTest || {
   adb logcat -d -v threadtime > "$evidence_path/logcat.txt"

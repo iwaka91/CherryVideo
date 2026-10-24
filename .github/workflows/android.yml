@@ -14,6 +14,9 @@ jobs:
     timeout-minutes: 40
     env:
       QEMU_AUDIO_DRV: pa
+      QEMU_PA_SERVER: tcp:127.0.0.1:4713
+      QEMU_PA_SINK: cherry_test
+      QEMU_PA_SOURCE: cherry_test.monitor
       PULSE_SINK: cherry_test
       PULSE_SOURCE: cherry_test.monitor
     steps:
@@ -43,7 +46,10 @@ jobs:
           pactl load-module module-null-sink sink_name=cherry_test rate=48000 channels=2
           pactl set-default-sink cherry_test
           pactl set-default-source cherry_test.monitor
+          pactl load-module module-native-protocol-tcp listen=127.0.0.1 port=4713 auth-anonymous=1
+          pactl --server=tcp:127.0.0.1:4713 info
           nohup ffmpeg -nostdin -loglevel error -re -f lavfi -i sine=frequency=880:sample_rate=48000 -f pulse 'Cherry CI reference' > /tmp/cherry-tone.log 2>&1 &
+          ffmpeg -v error -f pulse -i cherry_test.monitor -t 1 -f f32le - | python3 -c 'import array,sys,math; s=array.array("f",sys.stdin.buffer.read()); rms=math.sqrt(sum(x*x for x in s)/len(s)); print("Host reference RMS:",rms); assert rms>.001'
       - name: Device tests, real GLES and camera-emulator recording
         uses: reactivecircus/android-emulator-runner@v2
         with:

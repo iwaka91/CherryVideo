@@ -145,7 +145,7 @@ class VideoRenderer(
         check(encoder!=EGL14.EGL_NO_SURFACE) { "Encoder EGL surface unavailable" }
         encoderGate=FrameGate(outputFps);renderedFrames=0L;lastEncodedTimestampNs=0L;firstEncodedTimestampNs=0L;encoding=true
     } }
-    /** Keep the BufferQueue connected until MediaRecorder has drained its pending frames. */
+    /** Keep the BufferQueue connected until the recorder has drained its pending frames. */
     fun pauseEncoder() { sync {
         encoding=false
         if(encoder!=EGL14.EGL_NO_SURFACE) { current(encoder);GLES30.glFinish();checkGl() }

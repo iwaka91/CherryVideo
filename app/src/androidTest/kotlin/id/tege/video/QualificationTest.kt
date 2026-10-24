@@ -74,6 +74,7 @@ class QualificationTest {
             // Screenshot capture can stall a software-rendered emulator. Measure a
             // normal take after that diagnostic work, with a recent submitted frame.
             Thread.sleep(3500)
+            assertTrue("The virtual reference microphone must provide PCM samples",(activity.engine?.amplitude() ?: 0)>100)
             await("Camera timestamp did not catch up after screenshot",10000) {
                 val stamp=activity.engine?.lastEncodedTimestampNs ?: 0L
                 stamp>0 && System.nanoTime()-stamp in 0L..250_000_000L

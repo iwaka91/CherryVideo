@@ -14,7 +14,7 @@ References: [Android output timestamp/mirror contract](https://developer.android
 
 0.2.0 stores new video in Movies/CherryVideo and retains package id.tege.video for updates. Internal qualification now runs API 35 and 36, decoded motion at distinct times, A/V epochs/duration, orientation/mirror and UI selection/dock checks. Physical-device latency, smoothness, image orientation and sustained 1080p/4K performance remain mandatory follow-up checks.
 
-Readiness now waits for the first successfully rendered preview frame. Stopping pauses GL submissions and completes GPU work while retaining the encoder BufferQueue, drains MediaRecorder, then destroys the EGL encoder surface. Diagnostics compare submitted-frame timing with the encoded timeline. CI uses a PulseAudio virtual microphone with an 880 Hz reference tone instead of disabling emulator audio; independent decoding also requires non-silent recorded audio. GPU color checks cover 2³, 17³ and 33³ tables.
+Readiness now waits for the first successfully rendered preview frame. Camera recording uses surface MediaCodec video, AudioRecord/AAC and MediaMuxer with one MONOTONIC epoch, replacing MediaRecorder's short stop timeout. Stopping pauses GL submissions and completes GPU work while retaining the encoder BufferQueue, drains both codecs to EOS with a bounded wait, then destroys the EGL encoder surface. Diagnostics compare submitted-frame timing with the encoded timeline. CI uses a PulseAudio virtual microphone with an 880 Hz reference tone instead of disabling emulator audio; PCM amplitude and independent decoding also require non-silent recorded audio. GPU color checks cover 2³, 17³ and 33³ tables. Low-resolution GPU fixtures retain an independent MediaRecorder path.
 
 Target: Xiaomi 13T 2306EPN60G, Android 16/API 36. App label TeGe Video, package id.tege.video. No photography path, vendor binaries, login, networking or cloud processing.
 
@@ -34,10 +34,10 @@ This is a small new Android application with two audited source adaptations, not
 ## Modules and data flow
 
 - `core`: bounded .cube parser and trilinear reference sampler, focus-pull interpolation/session cancellation, normal-session video admission, encoded-timestamp cadence inspection. Pure Kotlin/JVM; deterministic unit tests.
-- `camera`: Camera2 catalog/control ownership; single camera Handler; hardware stream/codec intersection; GPU surface pipeline; MediaRecorder AAC/MP4 finalization; MediaStore pending-to-visible publishing.
+- `camera`: Camera2 catalog/control ownership; single camera Handler; hardware stream/codec intersection; GPU surface pipeline; MediaCodec AVC/HEVC and AudioRecord/AAC with explicit EOS/MediaMuxer finalization; MediaStore pending-to-visible publishing.
 - `app`: native Android UI in Indonesian. Simple/Pro, file picker, persistent LUT library, diagnostic export, own-video gallery, thermal and lifecycle handling.
 
-Camera2 `TEMPLATE_RECORD` -> `SurfaceTexture` OES -> GLES 3 shader -> preview EGL surface and MediaRecorder input EGL surface -> AVC/HEVC + optional AAC -> temporary app-private MP4 -> MediaExtractor validation -> MediaStore `Movies/TeGeVideo`.
+Camera2 `TEMPLATE_RECORD` -> `SurfaceTexture` OES -> GLES 3 shader -> preview EGL surface and MediaCodec input EGL surface -> AVC/HEVC + optional AudioRecord/AAC -> MediaMuxer temporary app-private MP4 -> MediaExtractor validation -> MediaStore `Movies/CherryVideo`.
 
 LUT uploaded once as an RGBA16F 2D atlas of blue slices (maximum 33 x 1089). Bilinear sampling inside each slice plus explicit blue interpolation implements trilinear sampling. This replaces the original 3D texture path after GPU corner/highlight tests exposed black blue slices on the emulator. No per-frame CPU bitmap copy. The same grade shader serves both destinations, with an explicit original-color bypass for monitor-only mode. Strength blends source and graded SDR RGB. LUT input must correspond to SDR/Rec.709; importing a camera LOG conversion does not create a LOG recording profile. Supported cube sizes 2..33, 4 MiB byte bound, exact entry count, finite numbers, defined domain and strict UTF-8. 1D/shaper/65³ rejected. Headers from other cube dialects may be rejected rather than guessed.
 

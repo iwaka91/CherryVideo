@@ -8,9 +8,6 @@ import android.hardware.camera2.*
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.hardware.camera2.CameraCharacteristics as C
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
-import android.media.MediaRecorder
 import android.os.*
 import android.util.Log
 import android.view.Surface
@@ -50,7 +47,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private var session: CameraCaptureSession?=null
     private var request: CaptureRequest.Builder?=null
     private var renderer: VideoRenderer?=null
-    private var recorder: MediaRecorder?=null
+    private var recorder: SurfaceRecorder?=null
     private var encoderSurface: Surface?=null
     private var pending: File?=null
     private var name=""
@@ -214,30 +211,12 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             check(!recordAudio || context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) { "Izin mikrofon belum diberikan. Pilih Tanpa audio atau berikan izin." }
             name="Cherry_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS",Locale.US).format(Date())}.mp4"
             pending=File(context.filesDir,"pending-$name")
-            @Suppress("DEPRECATION")
-            val rec=MediaRecorder()
+            val rec=SurfaceRecorder(context,pending!!,profile,hevc,audioSource,orientation,
+                ((StatFs(context.filesDir.path).availableBytes-192L*1024*1024)/2).coerceAtMost(8L*1024*1024*1024),
+                onLimit={ handler.post { if(isRecording) stopInternal() } },
+                onFailure={ message -> handler.post { if(isRecording) stopInternal();error(message) } })
             recorder=rec
-            if(recordAudio) rec.setAudioSource(if(audioSource==2) MediaRecorder.AudioSource.MIC else MediaRecorder.AudioSource.CAMCORDER)
-            rec.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            rec.setVideoEncoder(if(hevc) MediaRecorder.VideoEncoder.HEVC else MediaRecorder.VideoEncoder.H264)
-            rec.setVideoSize(profile.width,profile.height);rec.setVideoFrameRate(profile.fps);rec.setVideoEncodingBitRate(profile.bitrate)
-            rec.setOrientationHint(orientation)
-            if(recordAudio) {
-                rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);rec.setAudioSamplingRate(48_000);rec.setAudioChannels(2);rec.setAudioEncodingBitRate(192_000)
-            }
-            rec.setOutputFile(pending!!.absolutePath)
-            // Finalization copies the validated file into MediaStore: reserve space for both copies.
-            rec.setMaxFileSize(((StatFs(context.filesDir.path).availableBytes-192L*1024*1024)/2).coerceAtMost(8L*1024*1024*1024))
-            rec.setOnErrorListener { _,what,extra -> handler.post { if(isRecording) stopInternal();error("Perekam error $what/$extra.") } }
-            rec.setOnInfoListener { _,what,_ -> if(what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED) handler.post { stopInternal() } }
             rec.prepare()
-            if(audioSource==2) {
-                val external=context.getSystemService(AudioManager::class.java).getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull {
-                    it.type in setOf(AudioDeviceInfo.TYPE_USB_DEVICE,AudioDeviceInfo.TYPE_USB_HEADSET,AudioDeviceInfo.TYPE_WIRED_HEADSET)
-                }
-                check(external!=null && rec.setPreferredDevice(external)) { "Mikrofon kabel/USB tidak tersedia atau ditolak." }
-            }
             encoderSurface=rec.surface
             rec.start()
             recordingStartNs=System.nanoTime()
@@ -259,7 +238,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         var stopped=false
         try {
             // Destroying EGL first disconnects the producer and frees queued buffers.
-            // Stop submitting, drain MediaRecorder, then release the EGL window.
+            // Stop submitting, drain both codecs to EOS, then release the EGL window.
             runCatching { renderer?.pauseEncoder() }.onFailure { Log.w("TeGeVideo","Could not finish pending GPU work",it) }
             renderer?.let { r ->
                 submission=JSONObject().put("frames",r.renderedFrames)
@@ -269,7 +248,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 Log.i("CherryVideo","Encoder submission: $submission")
             }
             recorder?.stop();stopped=true
-        } catch(e: Exception) { error("Video belum dapat difinalisasi: ${e.cause?.message ?: e.message}") }
+        } catch(e: Exception) { error("Video belum dapat difinalisasi; berkas sementara dipertahankan: ${e.cause?.message ?: e.message}") }
         finally {
             runCatching { renderer?.detachEncoder() }
             runCatching { recorder?.release() };recorder=null;encoderSurface?.release();encoderSurface=null
@@ -287,7 +266,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 val saved=VideoFiles.publish(context,file,name,report)
                 lastSaved=saved;ui { listener.onSaved(saved) }
             } catch(e: Exception) { error("Penyimpanan belum selesai. Berkas sementara dipertahankan: ${e.message}") }
-        } else { file?.delete() }
+        } else if(file?.length()==0L) { file.delete() }
         busy=false;ui { listener.onRecording(false) }
     }
     fun amplitude(): Int = try { recorder?.maxAmplitude ?: 0 } catch(_: Exception) { 0 }

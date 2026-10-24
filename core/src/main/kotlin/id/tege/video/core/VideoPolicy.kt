@@ -16,8 +16,8 @@ object VideoPolicy {
                 (minFrameDurationNs > 0 && minFrameDurationNs <= 1_000_000_000L / profile.fps + 1_000L))
 }
 
-/** Maps REALTIME camera stamps to the MONOTONIC clock expected by MediaRecorder audio.
- * Never subtract the first video frame: MediaRecorder itself anchors both tracks at recording start. */
+/** Maps REALTIME camera stamps to the shared MONOTONIC audio/codec clock.
+ * Never subtract only the first video frame: the recorder anchors both tracks to one epoch. */
 class FrameClock(private val offsetNs: Long = 0L) {
     fun monotonic(sensorNs: Long): Long = sensorNs - offsetNs
 }
