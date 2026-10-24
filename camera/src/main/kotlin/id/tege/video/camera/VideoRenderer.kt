@@ -113,9 +113,17 @@ class VideoRenderer(
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_LINEAR)
         for(axis in intArrayOf(GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_TEXTURE_WRAP_R))
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,axis,GLES30.GL_CLAMP_TO_EDGE)
-        val buffer=ByteBuffer.allocateDirect(values.size*4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(values)
+        // RGBA storage avoids driver-specific three-component half-float texture layouts.
+        val rgba=FloatArray(size*size*size*4)
+        for(i in 0 until size*size*size) {
+            rgba[i*4]=values[i*3];rgba[i*4+1]=values[i*3+1];rgba[i*4+2]=values[i*3+2];rgba[i*4+3]=1f
+        }
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT,1)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_BASE_LEVEL,0)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_MAX_LEVEL,0)
+        val buffer=ByteBuffer.allocateDirect(rgba.size*4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(rgba)
         buffer.position(0)
-        GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D,0,GLES30.GL_RGB16F,size,size,size,0,GLES30.GL_RGB,GLES30.GL_FLOAT,buffer)
+        GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D,0,GLES30.GL_RGBA16F,size,size,size,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,buffer)
         checkGl()
     }
     fun resize(w: Int,h: Int,degrees: Int,front: Boolean) { sync { width=w.coerceAtLeast(1);height=h.coerceAtLeast(1);rotation=degrees;mirrored=front } }

@@ -153,6 +153,24 @@ class QualificationTest {
         |""".trimMargin().toByteArray()
     @Test fun gpuLutBakesIntoEncodedMp4() { verifyGpu(baked=true) }
     @Test fun monitorOnlyLutKeepsOriginalEncodedColor() { verifyGpu(baked=false) }
+    @Test fun gpuLutCornersAndHighlightsMatchCpuReference() {
+        val reader=ImageReader.newInstance(320,240,PixelFormat.RGBA_8888,4)
+        reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))
+        var failure: String?=null
+        val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
+        val lut=CubeLut.parse(cubeSwap())
+        try {
+            renderer.resize(320,240,0,false);renderer.grade(lut,1f,true,0)
+            for(color in listOf(Color.RED,Color.GREEN,Color.BLUE,Color.CYAN,Color.MAGENTA,Color.YELLOW,Color.WHITE,Color.BLACK,Color.GRAY)) {
+                val canvas=renderer.input.lockCanvas(null);canvas.drawColor(color);renderer.input.unlockCanvasAndPost(canvas)
+                Thread.sleep(200)
+                val expected=lut.sample(Color.red(color)/255f,Color.green(color)/255f,Color.blue(color)/255f)
+                val actual=renderer.centerPixel()
+                for(c in 0..2) assertEquals("Input ${Integer.toHexString(color)} channel $c GPU ${actual.toList()}",expected[c]*255,actual[c].toFloat(),20f)
+            }
+            assertNull(failure)
+        } finally { renderer.close();reader.close() }
+    }
     @Test fun cameraTextureRotationAndMirroringAreAppliedOnce() {
         for(sensor in listOf(90,270)) for(producerMirror in listOf(false,true)) for(rotation in listOf(0,90,180,270)) for(front in listOf(false,true)) {
             val producer=TextureGeometry.cameraTransform(sensor,producerMirror)
@@ -266,6 +284,8 @@ class QualificationTest {
             val pixel=renderer.centerPixel()
             assertNull("GL renderer failure",failure)
             assertTrue("Preview LUT must turn red into green: ${pixel.toList()}",pixel[1]>180 && pixel[0]<60)
+            val highlight=renderer.previewPixel(.84f,.86f)
+            assertTrue("White highlight must remain white: ${highlight.toList()}",highlight.take(3).all { it>180 })
             renderer.detachEncoder();recorder.stop();surface.release()
             val report=VideoFiles.inspect(file,VideoProfile(320,240,30),false)
             assertTrue(report.getInt("frames")>=20)
@@ -278,7 +298,7 @@ class QualificationTest {
                 var changed=0
                 for(y in 3*bitmap.height/4 until bitmap.height step 4) for(x in 0 until bitmap.width step 4) {
                     val a=bitmap.getPixel(x,y);val b=later.getPixel(x*later.width/bitmap.width,y*later.height/bitmap.height)
-                    if(kotlin.math.abs(Color.blue(a)-Color.blue(b))>80) changed++
+                    if(kotlin.math.abs(Color.red(a)-Color.red(b))+kotlin.math.abs(Color.green(a)-Color.green(b))+kotlin.math.abs(Color.blue(a)-Color.blue(b))>120) changed++
                 }
                 assertTrue("Playback must show motion at distinct presentation times",changed>15)
                 later.recycle()
