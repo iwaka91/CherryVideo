@@ -29,6 +29,7 @@ import androidx.test.uiautomator.UiSelector
 import id.tege.video.camera.VideoFiles
 import id.tege.video.camera.VideoRenderer
 import id.tege.video.camera.TextureGeometry
+import id.tege.video.camera.SurfaceRecorder
 import id.tege.video.core.CubeLut
 import id.tege.video.core.VideoProfile
 import org.junit.Assert.*
@@ -270,15 +271,20 @@ class QualificationTest {
         val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
         val recorder=MediaRecorder()
         val file=File(evidence,if(baked) "lut-baked.mp4" else "lut-monitor-only.mp4")
+        val direct=if(baked) SurfaceRecorder(context,file,VideoProfile(320,240,30),false,0,0,100L*1024*1024,
+            onLimit={ failure="Unexpected test file limit" },onFailure={ failure=it }) else null
         try {
             renderer.resize(320,240,0,false)
             renderer.grade(CubeLut.parse(cubeSwap()),1f,baked,0)
-            recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            recorder.setVideoSize(320,240);recorder.setVideoFrameRate(30);recorder.setVideoEncodingBitRate(2_000_000)
-            recorder.setOutputFile(file.absolutePath);recorder.prepare();recorder.start()
-            val surface=recorder.surface
+            val surface=if(direct!=null) {
+                direct.prepare();direct.start();direct.surface
+            } else {
+                recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                recorder.setVideoSize(320,240);recorder.setVideoFrameRate(30);recorder.setVideoEncodingBitRate(2_000_000)
+                recorder.setOutputFile(file.absolutePath);recorder.prepare();recorder.start();recorder.surface
+            }
             renderer.attachEncoder(surface)
             repeat(70) { index ->
                 val canvas=renderer.input.lockCanvas(null);canvas.drawColor(Color.RED)
@@ -293,7 +299,7 @@ class QualificationTest {
             assertTrue("Preview LUT must turn red into green: ${pixel.toList()}",pixel[1]>180 && pixel[0]<60)
             val highlight=renderer.previewPixel(.84f,.86f)
             assertTrue("White highlight must remain white: ${highlight.toList()}",highlight.take(3).all { it>180 })
-            renderer.pauseEncoder();recorder.stop();renderer.detachEncoder();surface.release()
+            renderer.pauseEncoder();if(direct!=null) direct.stop() else recorder.stop();renderer.detachEncoder();surface.release()
             val report=VideoFiles.inspect(file,VideoProfile(320,240,30),false)
             assertTrue(report.getInt("frames")>=20)
             File(evidence,file.nameWithoutExtension+".json").writeText(report.toString(2))
@@ -314,6 +320,6 @@ class QualificationTest {
                 else assertTrue("Monitor-only altered encoded source",Color.red(center)>150 && Color.green(center)<70)
                 bitmap.recycle()
             } finally { retriever.release() }
-        } finally { runCatching { recorder.release() };renderer.close();reader.close() }
+        } finally { runCatching { direct?.release() };runCatching { recorder.release() };renderer.close();reader.close() }
     }
 }
