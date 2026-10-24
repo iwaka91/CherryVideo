@@ -51,6 +51,8 @@ jobs:
           nohup ffmpeg -nostdin -loglevel error -re -f lavfi -i sine=frequency=880:sample_rate=48000 -f pulse 'Cherry CI reference' > /tmp/cherry-tone.log 2>&1 &
           ffmpeg -v error -f pulse -i cherry_test.monitor -t 1 -f f32le - | python3 -c 'import array,sys,math; s=array.array("f",sys.stdin.buffer.read()); rms=math.sqrt(sum(x*x for x in s)/len(s)); print("Host reference RMS:",rms); assert rms>.001'
       - name: Device tests, real GLES and camera-emulator recording
+        env:
+          PULSE_SERVER: tcp:127.0.0.1:4713
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -61,6 +63,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back emulated -camera-front emulated -memory 3072 -cores 4
           script: bash tools/device-tests.sh build/device-evidence/api35
       - name: Android 16 regression tests
+        env:
+          PULSE_SERVER: tcp:127.0.0.1:4713
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
