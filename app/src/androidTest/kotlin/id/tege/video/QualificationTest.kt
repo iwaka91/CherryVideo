@@ -44,7 +44,7 @@ class QualificationTest {
     private fun await(message: String,timeout: Long=25000,predicate: ()->Boolean) {
         val deadline=System.currentTimeMillis()+timeout
         while(System.currentTimeMillis()<deadline) { if(predicate()) return;Thread.sleep(100) }
-        fail(message)
+        screenshot("test-failure.png");fail(message)
     }
     private fun tap(activity: MainActivity,tag: String) {
         instrumentation.runOnMainSync { assertTrue("Button $tag",activity.window.decorView.findViewWithTag<Button>(tag).performClick()) }
@@ -78,12 +78,20 @@ class QualificationTest {
             Thread.sleep(1500)
             await("Landscape camera did not reopen") { activity.engine?.isReady==true }
             screenshot("pro-landscape.png")
+            tap(activity,"record")
+            await("Landscape recorder did not start") { activity.engine?.isRecording==true }
+            Thread.sleep(2200)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            await("Backgrounding did not save the current take") { activity.lastSaved?.name!=saved.name }
+            val background=activity.lastSaved!!
+            context.contentResolver.openInputStream(background.uri)!!.use { input -> File(evidence,"camera-background.mp4").outputStream().use { input.copyTo(it) } }
+            File(evidence,"camera-background.json").writeText(background.report.toString(2))
         }
     }
     @Test fun cubeImporterUsesPickerAndRejectsMalformedFile() {
         val resolver=context.contentResolver
         val uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME,"TeGe-test.cube");put(MediaStore.Downloads.MIME_TYPE,"text/plain");put(MediaStore.Downloads.IS_PENDING,1)
+            put(MediaStore.Downloads.DISPLAY_NAME,"TeGe-test.cube");put(MediaStore.Downloads.MIME_TYPE,"application/octet-stream");put(MediaStore.Downloads.IS_PENDING,1)
         })!!
         val bytes=cubeSwap()
         resolver.openOutputStream(uri)!!.use { it.write(bytes) }

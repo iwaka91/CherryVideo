@@ -56,7 +56,7 @@ class VideoRenderer(
     private fun initialize() {
         display=EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
         check(EGL14.eglInitialize(display,IntArray(2),0,IntArray(2),0)) { "EGL initialize failed" }
-        val attrs=intArrayOf(EGL14.EGL_RED_SIZE,8,EGL14.EGL_GREEN_SIZE,8,EGL14.EGL_BLUE_SIZE,8,
+        val attrs=intArrayOf(EGL14.EGL_RED_SIZE,8,EGL14.EGL_GREEN_SIZE,8,EGL14.EGL_BLUE_SIZE,8,EGL14.EGL_ALPHA_SIZE,8,
             EGL14.EGL_RENDERABLE_TYPE,0x40,EGL14.EGL_SURFACE_TYPE,EGL14.EGL_WINDOW_BIT,0x3142,1,EGL14.EGL_NONE)
         val configs=arrayOfNulls<EGLConfig>(1)
         check(EGL14.eglChooseConfig(display,attrs,0,configs,0,1,IntArray(1),0) && configs[0]!=null) { "GLES 3 recordable surface unavailable" }
@@ -110,7 +110,9 @@ class VideoRenderer(
     } }
     fun detachEncoder() { sync {
         if(encoder!=EGL14.EGL_NO_SURFACE) {
-            current(window); EGL14.eglDestroySurface(display,encoder); encoder=EGL14.EGL_NO_SURFACE
+            // The Activity preview may already have been destroyed while backgrounding.
+            EGL14.eglMakeCurrent(display,EGL14.EGL_NO_SURFACE,EGL14.EGL_NO_SURFACE,EGL14.EGL_NO_CONTEXT)
+            EGL14.eglDestroySurface(display,encoder); encoder=EGL14.EGL_NO_SURFACE
         }
     } }
     private fun render() {

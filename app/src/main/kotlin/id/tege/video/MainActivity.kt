@@ -61,6 +61,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var exportJson=""
     private var uiRecording=false
     private var rebuilding=false
+    private var retiringEngines=0
     @Volatile var engine: CameraEngine?=null; private set
     @Volatile var lastSaved: SavedVideo?=null; private set
     private val thermalListener=PowerManager.OnThermalStatusChangedListener { value ->
@@ -181,22 +182,27 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         return if(c.front) (c.rotation+displayDegrees)%360 else (c.rotation-displayDegrees+360)%360
     }
     private fun startCamera() {
-        if(!resumed || engine!=null || !preview.holder.surface.isValid || cameras.isEmpty()) return
+        if(!resumed || engine!=null || retiringEngines>0 || !preview.holder.surface.isValid || cameras.isEmpty()) return
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) { onStatus("Berikan izin Kamera melalui Pengaturan Android untuk merekam.");return }
         val camera=cameras[cameraIndex]
         val options=camera.profiles(hevc)
         if(options.isEmpty()) { onError("Tidak ada profil video standar yang memenuhi batas kamera dan encoder.");return }
         if(selected !in options) { selected=options.first();onStatus("Profil tersedia: ${selected.label}") }
         quality.text=selected.label;lens.text=if(camera.id=="0") "Utama · 1×" else if(camera.front) "Depan" else "Kamera ${camera.id}"
-        controls=controls.copy(stabilization=if(camera.ois) 1 else if(camera.eis) 2 else 0)
+        if(controls.stabilization<0) controls=controls.copy(stabilization=if(camera.ois) 1 else if(camera.eis) 2 else 0)
         val e=CameraEngine(applicationContext,this);engine=e
         e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation())
         e.update(controls);e.grade(lut,strength,bake,look)
     }
-    private fun restart() { record.isEnabled=false;engine?.close();engine=null;main.postDelayed({ startCamera() },250) }
+    private fun retireEngine() {
+        val old=engine ?: return
+        engine=null;retiringEngines++
+        old.close { retiringEngines--;startCamera() }
+    }
+    private fun restart() { record.isEnabled=false;retireEngine();main.post { startCamera() } }
     override fun surfaceCreated(holder: SurfaceHolder) { if(!rebuilding) startCamera() }
     override fun surfaceChanged(holder: SurfaceHolder,format: Int,width: Int,height: Int) { startCamera();engine?.resize(width,height,rotation()) }
-    override fun surfaceDestroyed(holder: SurfaceHolder) { engine?.close();engine=null }
+    override fun surfaceDestroyed(holder: SurfaceHolder) { retireEngine() }
     override fun onResume() {
         super.onResume();resumed=true
         getSystemService(PowerManager::class.java).apply { thermal=currentThermalStatus;addThermalStatusListener(mainExecutor,thermalListener) }
@@ -205,13 +211,13 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     override fun onPause() {
         resumed=false;main.removeCallbacks(clock)
         getSystemService(PowerManager::class.java).removeThermalStatusListener(thermalListener)
-        engine?.close();engine=null;super.onPause()
+        retireEngine();super.onPause()
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if(engine?.isRecording==true) {
             engine?.resize(preview.width,preview.height,rotation())
-        } else { engine?.close();engine=null;buildUi();main.post { startCamera() } }
+        } else { retireEngine();buildUi();main.post { startCamera() } }
     }
     override fun onRequestPermissionsResult(requestCode: Int,permissions: Array<out String>,results: IntArray) {
         super.onRequestPermissionsResult(requestCode,permissions,results)
@@ -219,7 +225,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         startCamera()
     }
     override fun onStatus(message: String) { if(!isDestroyed) status.text=message }
-    override fun onReady(entry: CameraEntry) { if(resumed && !isDestroyed) record.isEnabled=true }
+    override fun onReady(entry: CameraEntry) { if(resumed && !isDestroyed && engine?.isReady==true) record.isEnabled=true }
     override fun onRecording(active: Boolean) {
         uiRecording=active
         if(isDestroyed) return
@@ -236,7 +242,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val r=video.report
         onStatus(String.format(Locale.US,"Tersimpan · %.2f fps aktual%s",r.getDouble("actualFps"),if(r.getBoolean("steadyCadence")) "" else " · ritme frame tidak stabil"))
     }
-    override fun onError(message: String) { onStatus(message);if(!isDestroyed) { record.isEnabled=engine?.isReady==true;Toast.makeText(this,message,Toast.LENGTH_LONG).show() } }
+    override fun onError(message: String) { android.util.Log.e("TeGeVideo",message);onStatus(message);if(!isDestroyed) { record.isEnabled=engine?.isReady==true;Toast.makeText(this,message,Toast.LENGTH_LONG).show() } }
     private fun locked(): Boolean {
         if(engine?.isRecording==true || engine?.busy==true) { Toast.makeText(this,"Selesaikan rekaman dahulu.",Toast.LENGTH_SHORT).show();return true };return false
     }

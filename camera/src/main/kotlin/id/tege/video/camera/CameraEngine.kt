@@ -27,7 +27,7 @@ data class Controls(
     val aeLock: Boolean=false,
     val awbLock: Boolean=false,
     val wb: Int=CaptureRequest.CONTROL_AWB_MODE_AUTO,
-    val stabilization: Int=0,
+    val stabilization: Int=-1,
     val torch: Boolean=false,
 )
 
@@ -199,7 +199,8 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);rec.setAudioSamplingRate(48_000);rec.setAudioChannels(2);rec.setAudioEncodingBitRate(192_000)
             }
             rec.setOutputFile(pending!!.absolutePath)
-            rec.setMaxFileSize((StatFs(context.filesDir.path).availableBytes-128L*1024*1024).coerceAtMost(8L*1024*1024*1024))
+            // Finalization copies the validated file into MediaStore: reserve space for both copies.
+            rec.setMaxFileSize(((StatFs(context.filesDir.path).availableBytes-192L*1024*1024)/2).coerceAtMost(8L*1024*1024*1024))
             rec.setOnErrorListener { _,what,extra -> handler.post { if(isRecording) stopInternal();error("Perekam error $what/$extra.") } }
             rec.setOnInfoListener { _,what,_ -> if(what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED) handler.post { stopInternal() } }
             rec.prepare()
@@ -226,7 +227,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         busy=true;isRecording=false;focus.cancel()
         var stopped=false
         try {
-            renderer?.detachEncoder()
+            runCatching { renderer?.detachEncoder() }.onFailure { Log.w("TeGeVideo","Preview already released while finalizing",it) }
             recorder?.stop();stopped=true
         } catch(e: Exception) { error("Video belum dapat difinalisasi: ${e.cause?.message ?: e.message}") }
         finally {
@@ -251,9 +252,12 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         isReady=false;focus.cancel();session?.close();session=null;device?.close();device=null
         runCatching { renderer?.close() };renderer=null
     }
-    fun close() {
+    fun close(onClosed: ()->Unit = {}) {
         if(closing) return
         closing=true
-        handler.post { if(isRecording) stopInternal();releaseCamera();thread.quitSafely() }
+        handler.post {
+            try { if(isRecording) stopInternal() }
+            finally { releaseCamera();thread.quitSafely();ui(onClosed) }
+        }
     }
 }
