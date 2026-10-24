@@ -101,8 +101,10 @@ class QualificationTest {
                 screenshot("lut-import.png")
                 val old=context.getSharedPreferences("tege",0).getString("lut",null)
                 resolver.openOutputStream(uri,"w")!!.use { it.write("LUT_3D_SIZE 33\n0 0 0".toByteArray()) }
-                scenario.onActivity { it.onActivityResult(100,Activity.RESULT_OK,Intent().setData(uri)) }
-                Thread.sleep(800)
+                UiDevice.getInstance(instrumentation).findObject(UiSelector().text("＋ Impor LUT (.cube)")).click()
+                await("Malformed LUT did not show an import error") {
+                    activity.window.decorView.findViewWithTag<android.widget.TextView>("status").text.toString().startsWith("Impor LUT ditolak")
+                }
                 assertEquals(old,context.getSharedPreferences("tege",0).getString("lut",null))
             }
         } finally { instrumentation.removeMonitor(monitor);resolver.delete(uri,null,null) }

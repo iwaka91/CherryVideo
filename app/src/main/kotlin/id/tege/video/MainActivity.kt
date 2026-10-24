@@ -223,6 +223,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     override fun onRecording(active: Boolean) {
         uiRecording=active
         if(isDestroyed) return
+        requestedOrientation=if(active) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         if(active) recordingSince=SystemClock.elapsedRealtime()
         record.text=if(active) "■  STOP" else "●  REKAM"
         record.contentDescription=if(active) "Stop rekaman" else "Mulai rekaman"
