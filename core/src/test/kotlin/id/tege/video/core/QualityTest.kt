@@ -49,6 +49,23 @@ class QualityTest {
         assertFalse(VideoPolicy.qualifies(VideoProfile(1920,1080,60),60,33_333_333,true))
         assertTrue(VideoPolicy.qualifies(VideoProfile(1920,1080,60),60,16_666_666,true))
     }
+    @Test fun unknownStreamDurationOnlyQualifiesRegular30() {
+        assertTrue(VideoPolicy.qualifies(VideoProfile(3840,2160,30),30,0,true))
+        assertFalse(VideoPolicy.qualifies(VideoProfile(1920,1080,60),60,0,true))
+        assertFalse(VideoPolicy.qualifies(VideoProfile(3840,2160,30),30,0,false))
+    }
+    @Test fun cameraRealtimeIncludesSleepButRecorderClockDoesNot() {
+        val sleep=15_070_000_000_000L
+        val clock=FrameClock(sleep)
+        assertEquals(123_000_000_000L,clock.monotonic(123_000_000_000L+sleep))
+        assertEquals(33_333_333L,clock.monotonic(sleep+156_033_333_333L)-clock.monotonic(sleep+156_000_000_000L))
+    }
+    @Test fun highSpeedSamplingPreservesRealtime60RatherThanSlowMotion() {
+        val gate=FrameGate(60)
+        val selected=(0..239).map { it*8_333_333L }.filter { gate.accept(it) }
+        assertEquals(120,selected.size)
+        assertEquals(60.0,(selected.size-1)*1_000_000_000.0/(selected.last()-selected.first()),.1)
+    }
     @Test fun catchesMislabelledAndVariableRateVideo() {
         val thirty=(0L..90L).map { it*33_333 }
         assertTrue(VideoCadence.inspect(thirty,30).steady)

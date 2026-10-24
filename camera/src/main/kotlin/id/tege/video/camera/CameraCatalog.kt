@@ -10,6 +10,8 @@ import android.util.Range
 import android.util.Size
 import id.tege.video.core.VideoPolicy
 import id.tege.video.core.VideoProfile
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class CameraEntry(val id: String, val label: String, val characteristics: C) {
     val front: Boolean get() = characteristics[C.LENS_FACING] == C.LENS_FACING_FRONT
@@ -20,25 +22,52 @@ data class CameraEntry(val id: String, val label: String, val characteristics: C
     val eis: Boolean get() = characteristics[C.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES]?.contains(1) == true
     val ranges: List<Range<Int>> get() = characteristics[C.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES]?.toList().orEmpty()
     fun range(fps: Int): Range<Int>? = ranges.filter { it.upper == fps }.minByOrNull { it.upper - it.lower }
+    fun highSpeedRates(width: Int, height: Int): List<Int> = runCatching {
+        val map=characteristics[C.SCALER_STREAM_CONFIGURATION_MAP] ?: return@runCatching emptyList()
+        if(characteristics[C.REQUEST_AVAILABLE_CAPABILITIES]?.contains(C.REQUEST_AVAILABLE_CAPABILITIES_CONSTRAINED_HIGH_SPEED_VIDEO)!=true) return@runCatching emptyList()
+        map.getHighSpeedVideoFpsRangesFor(Size(width,height)).filter { it.lower==it.upper && it.upper>=120 && it.upper%60==0 }.map { it.upper }.sorted()
+    }.getOrDefault(emptyList())
     fun profiles(hevc: Boolean): List<VideoProfile> {
         val map=characteristics[C.SCALER_STREAM_CONFIGURATION_MAP] ?: return emptyList()
         val sizes=map.getOutputSizes(SurfaceTexture::class.java)?.toSet().orEmpty()
-        return listOf(VideoProfile(1920,1080,30), VideoProfile(1920,1080,60), VideoProfile(3840,2160,30), VideoProfile(1280,720,30)).filter { p ->
+        val normal=listOf(VideoProfile(1920,1080,30), VideoProfile(1920,1080,60), VideoProfile(3840,2160,30), VideoProfile(1280,720,30)).filter { p ->
             val size=Size(p.width,p.height)
             size in sizes && range(p.fps) != null && VideoPolicy.qualifies(p, range(p.fps)!!.upper,
                 map.getOutputMinFrameDuration(SurfaceTexture::class.java,size), CodecSupport.supports(p,hevc))
         }
+        val highSpeed=highSpeedRates(1920,1080).firstOrNull()?.let { VideoProfile(1920,1080,60,it) }
+            ?.takeIf { Size(it.width,it.height) in sizes && CodecSupport.supports(it,hevc) }
+        return (normal + listOfNotNull(highSpeed?.takeIf { normal.none { p -> p.fps==60 } }))
+            .sortedWith(compareBy<VideoProfile> { if(it.height==1080) 0 else if(it.width>=3840) 1 else 2 }.thenBy { it.fps })
     }
-    fun report(): String = buildString {
-        append("Camera $id · $label\nSensor rotation: $rotation°\n")
-        append("Manual sensor: $manual\nFocus range: 0..$minFocus diopter\nOIS: $ois · EIS: $eis\n")
-        append("Normal AE ranges: ${ranges.joinToString()}\n")
-        append("AVC: ${profiles(false).joinToString { it.label }}\nHEVC: ${profiles(true).joinToString { it.label }}\n")
-        append("Advertised profiles are not yet physical-device verified. Constrained high-speed sessions are not implemented in this release.\n")
-    }
+    fun report(): JSONObject = JSONObject().put("id",id).put("label",label).put("front",front)
+        .put("sensorRotation",rotation).put("minFocusDiopter",minFocus.toDouble()).put("manualSensor",manual)
+        .put("ois",ois).put("eis",eis).put("timestampSource",characteristics[C.SENSOR_INFO_TIMESTAMP_SOURCE])
+        .put("normalAeRanges",JSONArray(ranges.map { listOf(it.lower,it.upper) }))
+        .put("highSpeed1080CaptureRates",JSONArray(highSpeedRates(1920,1080)))
+        .put("physicalIds",JSONArray(characteristics.physicalCameraIds.toList()))
+        .put("profiles",JSONArray(listOf(false,true).flatMap { hevc -> profiles(hevc).map { p ->
+            JSONObject().put("label",p.label).put("codec",if(hevc) "HEVC" else "AVC").put("captureFps",p.captureFps).put("highSpeed",p.highSpeed)
+        } }))
+        .put("regularCandidates",JSONArray(listOf(VideoProfile(1920,1080,30),VideoProfile(1920,1080,60),VideoProfile(3840,2160,30),VideoProfile(1280,720,30)).map { p ->
+            val map=characteristics[C.SCALER_STREAM_CONFIGURATION_MAP]
+            val size=Size(p.width,p.height)
+            val sizeAvailable=map?.getOutputSizes(SurfaceTexture::class.java)?.contains(size)==true
+            JSONObject().put("label",p.label).put("sizeAvailable",sizeAvailable)
+                .put("minFrameDurationNs",if(sizeAvailable) map!!.getOutputMinFrameDuration(SurfaceTexture::class.java,size) else -1)
+                .put("aeRange",range(p.fps)?.toString() ?: "unavailable")
+                .put("avcEncoder",CodecSupport.supports(p,false)).put("hevcEncoder",CodecSupport.supports(p,true))
+        }))
 }
 
 object CameraCatalog {
+    fun physicalReport(context: Context,entries: List<CameraEntry>): JSONArray {
+        val manager=context.getSystemService(CameraManager::class.java)
+        return JSONArray(entries.flatMap { it.characteristics.physicalCameraIds }.distinct().map { id ->
+            runCatching { CameraEntry(id,"Physical $id",manager.getCameraCharacteristics(id)).report() }
+                .getOrElse { JSONObject().put("id",id).put("error",it.message) }
+        })
+    }
     fun list(context: Context): List<CameraEntry> {
         val manager=context.getSystemService(CameraManager::class.java)
         return manager.cameraIdList.mapNotNull { id -> runCatching {

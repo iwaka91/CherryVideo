@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.camera2.*
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
 import android.hardware.camera2.CameraCharacteristics as C
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -41,7 +43,7 @@ interface CameraListener {
 
 /** Camera and recorder ownership live on one serial executor. GL owns only surfaces and grading. */
 class CameraEngine(private val context: Context, private val listener: CameraListener) {
-    private val thread=HandlerThread("TeGe-Camera").apply { start() }
+    private val thread=HandlerThread("Cherry-Camera").apply { start() }
     private val handler=Handler(thread.looper)
     private val main=Handler(Looper.getMainLooper())
     private var device: CameraDevice?=null
@@ -71,6 +73,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     lateinit var entry: CameraEntry; private set
     lateinit var profile: VideoProfile; private set
     var hevc=false; private set
+    val previewStats: JSONObject get() = renderer?.stats ?: JSONObject()
     private fun ui(block: ()->Unit) { main.post(block) }
     private fun error(message: String) { lastError=message;Log.e("TeGeVideo",message);ui { listener.onError(message) } }
     @SuppressLint("MissingPermission")
@@ -80,8 +83,11 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             entry=camera;profile=p;hevc=h265;orientation=rotation
             try {
                 check(context.checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED) { "Izin kamera belum diberikan." }
-                check(p in entry.profiles(h265)) { "Kombinasi resolusi/FPS/codec tidak didukung sesi standar." }
-                renderer=VideoRenderer(surface,p.width,p.height) { message -> handler.post {
+                check(p in entry.profiles(h265)) { "Kombinasi resolusi/FPS/codec tidak didukung kamera." }
+                val legacyOffset=if(Build.VERSION.SDK_INT<33 && entry.characteristics[C.SENSOR_INFO_TIMESTAMP_SOURCE]==C.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME)
+                    SystemClock.elapsedRealtimeNanos()-System.nanoTime() else 0L
+                renderer=VideoRenderer(surface,p.width,p.height,sensorRotation=entry.rotation,
+                    producerMirrored=Build.VERSION.SDK_INT<33 && entry.front,timestampOffsetNs=legacyOffset,outputFps=p.fps) { message -> handler.post {
                     if(!closing) { if(isRecording) stopInternal();error(message) }
                 } }.apply { resize(w,h,rotation,entry.front) }
                 val manager=context.getSystemService(CameraManager::class.java)
@@ -99,25 +105,38 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             } catch(e: Exception) { error(e.cause?.message ?: e.message ?: "Gagal membuka kamera.");releaseCamera() }
         }
     }
-    @Suppress("DEPRECATION")
     private fun createSession() {
         val camera=device ?: return
         val input=renderer?.input ?: return
-        camera.createCaptureSession(listOf(input),object: CameraCaptureSession.StateCallback() {
+        val callback=object: CameraCaptureSession.StateCallback() {
             override fun onConfigured(value: CameraCaptureSession) {
                 if(closing) { value.close();return }
                 session=value
                 try {
                     request=camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply { addTarget(input) }
-                    applyControls();isReady=true;ui { listener.onReady(entry);listener.onStatus("Siap · ${profile.label}") }
+                    applyControls();isReady=true;ui { listener.onReady(entry);listener.onStatus("Siap · ${profile.label}${if(profile.highSpeed) " · high-speed, uji FPS aktual" else ""}") }
                 } catch(e: Exception) { error(e.message ?: "Konfigurasi kamera gagal.") }
             }
             override fun onConfigureFailed(value: CameraCaptureSession) { value.close();error("Kamera menolak sesi video ${profile.label}.") }
-        },handler)
+        }
+        val output=OutputConfiguration(input)
+        if(Build.VERSION.SDK_INT>=33) {
+            // SurfaceTexture defaults to the sensor clock, which may include hours of deep sleep.
+            output.setTimestampBase(OutputConfiguration.TIMESTAMP_BASE_MONOTONIC)
+            output.setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
+        }
+        camera.createCaptureSession(SessionConfiguration(if(profile.highSpeed) SessionConfiguration.SESSION_HIGH_SPEED else SessionConfiguration.SESSION_REGULAR,
+            listOf(output),java.util.concurrent.Executor { handler.post(it) },callback))
     }
     private fun applyControls() {
         val b=request ?: return
         b.set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO)
+        if(profile.highSpeed) {
+            b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,android.util.Range(profile.captureFps,profile.captureFps))
+            val high=checkNotNull(session as? CameraConstrainedHighSpeedCaptureSession) { "Sesi high-speed tidak tersedia." }
+            high.setRepeatingBurst(high.createHighSpeedRequestList(b.build()),captureCallback,handler)
+            return
+        }
         b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,entry.range(profile.fps))
         if(controls.iso>0 && controls.shutterNs>0 && entry.manual) {
             b.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_OFF)
@@ -146,11 +165,12 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         b.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,if(controls.stabilization==1 && entry.ois) 1 else 0)
         b.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,if(controls.stabilization==2 && entry.eis) 1 else 0)
         if(entry.characteristics[C.FLASH_INFO_AVAILABLE]==true) b.set(CaptureRequest.FLASH_MODE,if(controls.torch) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
-        session?.setRepeatingRequest(b.build(),object: CameraCaptureSession.CaptureCallback() {
-            override fun onCaptureCompleted(s: CameraCaptureSession,r: CaptureRequest,result: TotalCaptureResult) {
-                exposureInfo="ISO ${result[CaptureResult.SENSOR_SENSITIVITY]} · ${result[CaptureResult.SENSOR_EXPOSURE_TIME]} ns"
-            }
-        },handler)
+        session?.setRepeatingRequest(b.build(),captureCallback,handler)
+    }
+    private val captureCallback=object: CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(s: CameraCaptureSession,r: CaptureRequest,result: TotalCaptureResult) {
+            exposureInfo="ISO ${result[CaptureResult.SENSOR_SENSITIVITY]} · ${result[CaptureResult.SENSOR_EXPOSURE_TIME]} ns"
+        }
     }
     fun update(value: Controls) { handler.post {
         focus.cancel();controls=value
@@ -184,7 +204,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             recordAudio=audioSource!=0
             requestedAudio=audioSource
             check(!recordAudio || context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) { "Izin mikrofon belum diberikan. Pilih Tanpa audio atau berikan izin." }
-            name="TeGe_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS",Locale.US).format(Date())}.mp4"
+            name="Cherry_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS",Locale.US).format(Date())}.mp4"
             pending=File(context.filesDir,"pending-$name")
             @Suppress("DEPRECATION")
             val rec=MediaRecorder()
@@ -236,11 +256,12 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         val file=pending;pending=null
         if(stopped && file!=null) {
             try {
-                val report=VideoFiles.inspect(file,profile,recordAudio)
+                val report=VideoFiles.inspect(file,profile,recordAudio,orientation)
                     .put("cameraId",entry.id).put("device","${Build.MANUFACTURER} ${Build.MODEL}")
                     .put("androidApi",Build.VERSION.SDK_INT).put("lutSha256",lut?.sha256 ?: JSONObject.NULL)
                     .put("look",look).put("strength",intensity.toDouble()).put("baked",bake)
                     .put("audioSourceRequest",requestedAudio).put("lastSensorExposure",exposureInfo)
+                    .put("captureFps",profile.captureFps).put("highSpeed",profile.highSpeed).put("preview",previewStats)
                 val saved=VideoFiles.publish(context,file,name,report)
                 lastSaved=saved;ui { listener.onSaved(saved) }
             } catch(e: Exception) { error("Penyimpanan belum selesai. Berkas sementara dipertahankan: ${e.message}") }

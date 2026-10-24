@@ -1,4 +1,18 @@
-# TeGe Video: implementation decisions and evidence
+# Cherry Video: implementation decisions and evidence
+
+## 0.2.0 correction after physical bug reports
+
+The original 0.1.1 emulator gate was insufficient: it checked cadence but not video/audio epoch alignment or container duration, and screenshots did not prove correct image orientation. The user's 1080p sample contains 256 changing frames at about 30 fps, but video starts at 15070.3593 s while audio starts at 0 s, producing an approximately four-hour timeline. 0.1.1 is not qualified for normal use.
+
+Camera2 SurfaceTexture defaults to SENSOR timestamps; MediaRecorder audio needs MONOTONIC. API 33+ OutputConfiguration explicitly requests MONOTONIC; API 29–32 REALTIME sensors use the elapsedRealtimeNanos-minus-nanoTime offset. Relative cadence is preserved. Validation checks start/end alignment, actual sample durations and container duration, and rejects the supplied regression pattern.
+
+SurfaceTexture also contains camera sensor orientation and optional mirroring. TextureGeometry removes the predicted camera transform while preserving producer crop, then applies one image-to-GL transform and requested preview rotation/mirror. The encoder receives unmirrored sensor pixels with orientation metadata. API 33+ sets producer mirroring NONE. Tests cover synthetic GPU quadrants plus sensor orientations 90/270 and all four display rotations.
+
+References: [Android output timestamp/mirror contract](https://developer.android.com/reference/android/hardware/camera2/params/OutputConfiguration), [AndroidX camera transform rationale](https://android.googlesource.com/platform/frameworks/support/+/6353c5d0cbdb0a766f9640dde3ffcb0f9e4cfcf1/camera/camera-core/src/main/java/androidx/camera/core/processing/SurfaceOutputImpl.java). TextureGeometry is a small original implementation of these matrix operations, not an imported CameraX module.
+
+1080p60 can use an advertised regular profile or fixed constrained high-speed capture at 120+ fps with a real-time frame gate. Availability is not proof that a vendor delivers the requested rate; the UI marks HS as device-test pending. Manual controls and stabilization are disabled in HS sessions. Diagnostics include high-speed ranges and candidate rejection inputs, not guessed support. Older normal-session-only statements below describe the 0.1.1 baseline.
+
+0.2.0 stores new video in Movies/CherryVideo and retains package id.tege.video for updates. Internal qualification now runs API 35 and 36, decoded motion at distinct times, A/V epochs/duration, orientation/mirror and UI selection/dock checks. Physical-device latency, smoothness, image orientation and sustained 1080p/4K performance remain mandatory follow-up checks.
 
 Target: Xiaomi 13T 2306EPN60G, Android 16/API 36. App label TeGe Video, package id.tege.video. No photography path, vendor binaries, login, networking or cloud processing.
 

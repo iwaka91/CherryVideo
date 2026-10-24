@@ -1,4 +1,4 @@
-# TeGe Video
+# Cherry Video
 
 Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode dan Pro Mode. Package `id.tege.video`, Android 10+, target Android 16/API 36, OpenGL ES 3.0+.
 
@@ -6,11 +6,12 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 ## Fitur
 
-- 1080p30 sebagai pilihan awal; 1080p60 dan 4K30 hanya ditawarkan jika sesi Camera2 standar serta encoder mendukung. AVC/HEVC.
+- 1080p30 sebagai pilihan awal; 4K30 jika kamera/encoder mendukung. 1080p60 dapat memakai sesi standar atau constrained high-speed 120+ fps dengan sampling 60 fps waktu normal. Jalur high-speed ditandai HS (uji), tanpa kontrol manual/OIS/EIS; perlu verifikasi Xiaomi. AVC/HEVC.
 - Warna Natural, Cinema hangat, Teal lembut, Monokrom. Impor **3D LUT `.cube` hingga 33³ / 4 MiB**, intensitas 0–100%, pilihan pratinjau saja atau diterapkan ke video.
 - Fokus manual dan perpindahan A/B, ISO/shutter, EV, AE lock, preset WB/AWB lock, pilihan OIS atau EIS, lampu kontinu jika tersedia.
 - Audio kamera, mikrofon kabel/USB, atau tanpa audio. Peak meter saat merekam.
-- Penyimpanan ke `Movies/TeGeVideo`, galeri, diagnostik dan ekspor JSON dengan FPS aktual dari timestamp file.
+- Panel LUT di luar preview; tombol menampilkan pilihan warna, OFF/EIS/OIS dan audio aktif. About ringkas dengan lisensi terpisah.
+- Penyimpanan ke `Movies/CherryVideo`, galeri (termasuk rekaman TeGe lama), diagnostik timing preview dan ekspor JSON dengan FPS aktual.
 - Finalisasi saat masuk latar, suhu berat atau ruang menipis. Rekaman ditahan sebagai berkas sementara sampai pemeriksaan dan publikasi selesai.
 
 ## Build dan uji
@@ -22,13 +23,13 @@ bash gradlew :core:test :camera:lintDebug :app:lintDebug :app:assembleDebug :app
 bash gradlew :app:connectedDebugAndroidTest
 ```
 
-Workflow GitHub Actions menjalankan build, lint, tes JVM dan instrumentasi emulator API 35: UI, pemilih berkas LUT, render GLES sebenarnya, validasi warna pada MP4 hasil encode, serta rekam/stop kamera emulator. Pemeriksaan terpisah memakai ffprobe. APK dan prerelease hanya diterbitkan sesudah gerbang internal lolos. Bukti tes tersedia di artifact workflow.
+Workflow GitHub Actions menjalankan build, lint, tes JVM dan instrumentasi emulator API 35/36: UI, pemilih LUT, transform rotasi/mirror, render GLES, validasi warna dan gerakan pada MP4, serta rekam/stop kamera emulator. Timestamp awal, sinkronisasi A/V dan durasi kontainer wajib lolos; regresi offset 15.070 detik sengaja ditolak. Pemeriksaan terpisah memakai ffprobe dan frame hasil decode. APK dan prerelease hanya diterbitkan setelah gerbang internal lolos. Bukti tes tersedia di artifact workflow.
 
 APK adalah build uji bertanda tangan debug. Identitas debug dipertahankan melalui Actions cache; belum memakai kunci rilis produksi. Build emulator memeriksa jalur implementasi, belum mensertifikasi kualitas, panas atau perilaku Camera2 di Xiaomi 13T.
 
 ## Batas versi awal
 
-SDR 8-bit; belum ada LOG/HDR, RAW, LUT 1D/shaper/65³, Gyroflow, sesi constrained high-speed, gain audio manual atau monitor headphone. Rekaman disimpan ketika aplikasi masuk latar. Galeri membuka pemutar video yang terpasang. 60 fps harus lolos uji di perangkat sebelum dianggap terbukti.
+SDR 8-bit; belum ada LOG/HDR, RAW, LUT 1D/shaper/65³, Gyroflow, gain audio manual atau monitor headphone. Rekaman disimpan ketika aplikasi masuk latar. Galeri membuka pemutar video yang terpasang. 4K/60 fps dan latensi preview harus diuji di perangkat sebelum dianggap terbukti.
 
 [Arsitektur, keputusan sumber dan rencana validasi](docs/ARCHITECTURE_AND_AUDIT.md) · [Catatan rilis](docs/RELEASE_NOTES.md) · [Lisensi Apache 2.0](LICENSE) · [Atribusi](NOTICE)
 

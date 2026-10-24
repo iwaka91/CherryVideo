@@ -6,6 +6,9 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
 import id.tege.video.core.CubeLut
+import id.tege.video.core.FrameClock
+import id.tege.video.core.FrameGate
+import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.FutureTask
@@ -16,9 +19,13 @@ class VideoRenderer(
     private val preview: Surface,
     private val sourceWidth: Int,
     private val sourceHeight: Int,
+    private val sensorRotation: Int? = null,
+    private val producerMirrored: Boolean = false,
+    timestampOffsetNs: Long = 0L,
+    private val outputFps: Int = 30,
     private val onFailure: (String) -> Unit,
 ) : AutoCloseable {
-    private val thread=HandlerThread("TeGe-GL").apply { start() }
+    private val thread=HandlerThread("Cherry-GL",android.os.Process.THREAD_PRIORITY_DISPLAY).apply { start() }
     private val handler=Handler(thread.looper)
     private var display=EGL14.EGL_NO_DISPLAY
     private var context=EGL14.EGL_NO_CONTEXT
@@ -39,6 +46,17 @@ class VideoRenderer(
     private var bake=true
     private var look=0
     private var lastTimestamp=0L
+    private val frameClock=FrameClock(timestampOffsetNs)
+    private var encoderGate=FrameGate(outputFps)
+    private val previewGate=FrameGate(60)
+    private var frameScheduled=false
+    private var statsStart=0L
+    private var statsFrames=0
+    private var statsRenderNs=0L
+    private var lastArrival=0L
+    private var statsMaxGapNs=0L
+    @Volatile var stats=JSONObject();private set
+    private val locations=HashMap<String,Int>()
     private var closed=false
     @Volatile var renderedFrames=0L; private set
     private val uv=FloatArray(16)
@@ -75,7 +93,10 @@ class VideoRenderer(
         GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_CLAMP_TO_EDGE)
         texture=SurfaceTexture(oes).apply {
             setDefaultBufferSize(sourceWidth,sourceHeight)
-            setOnFrameAvailableListener({ render() },handler)
+            // Coalesce pending notifications and latch the newest buffer rather than replay a queue.
+            setOnFrameAvailableListener({
+                if(!frameScheduled && !closed) { frameScheduled=true;handler.post { frameScheduled=false;render() } }
+            },handler)
         }
         input=Surface(texture)
         uploadIdentity()
@@ -107,6 +128,7 @@ class VideoRenderer(
         check(encoder==EGL14.EGL_NO_SURFACE)
         encoder=EGL14.eglCreateWindowSurface(display,config,surface,intArrayOf(EGL14.EGL_NONE),0)
         check(encoder!=EGL14.EGL_NO_SURFACE) { "Encoder EGL surface unavailable" }
+        encoderGate=FrameGate(outputFps);renderedFrames=0L
     } }
     fun detachEncoder() { sync {
         if(encoder!=EGL14.EGL_NO_SURFACE) {
@@ -118,17 +140,35 @@ class VideoRenderer(
     private fun render() {
         if(closed) return
         try {
+            val started=System.nanoTime()
             current(window); texture.updateTexImage(); texture.getTransformMatrix(uv)
             val stamp=texture.timestamp
             if(stamp<=lastTimestamp) return
             lastTimestamp=stamp
-            draw(window,width,height,true)
-            check(EGL14.eglSwapBuffers(display,window)) { "Preview swap failed" }
-            if(encoder!=EGL14.EGL_NO_SURFACE) {
+            var previewDrawn=false
+            if(previewGate.accept(stamp)) {
+                draw(window,width,height,true)
+                check(EGL14.eglSwapBuffers(display,window)) { "Preview swap failed" };previewDrawn=true
+            }
+            if(encoder!=EGL14.EGL_NO_SURFACE && encoderGate.accept(stamp)) {
                 draw(encoder,sourceWidth,sourceHeight,false)
-                EGLExt.eglPresentationTimeANDROID(display,encoder,stamp)
+                check(EGLExt.eglPresentationTimeANDROID(display,encoder,frameClock.monotonic(stamp))) { "Encoder timestamp failed" }
                 check(EGL14.eglSwapBuffers(display,encoder)) { "Encoder swap failed" }
                 renderedFrames++
+            }
+            if(previewDrawn) {
+                if(statsStart==0L) statsStart=started
+                if(lastArrival!=0L) statsMaxGapNs=maxOf(statsMaxGapNs,started-lastArrival)
+                lastArrival=started;statsFrames++;statsRenderNs+=System.nanoTime()-started
+                val elapsed=started-statsStart
+                if(elapsed>=1_000_000_000L) {
+                    stats=JSONObject().put("previewSubmittedFps",(statsFrames-1)*1_000_000_000.0/elapsed)
+                        .put("averageRenderMs",statsRenderNs/1_000_000.0/statsFrames).put("maxArrivalGapMs",statsMaxGapNs/1_000_000.0)
+                        .put("sensorRotation",sensorRotation).put("relativeRotation",rotation).put("mirroredPreview",mirrored)
+                        .put("producerMatrix",org.json.JSONArray(uv.map { it.toDouble() }))
+                        .put("clock","MONOTONIC").put("scope","Frame submission timing; photon-to-photon latency not measured")
+                    statsStart=started;statsFrames=1;statsRenderNs=0L;statsMaxGapNs=0L
+                }
             }
         } catch(e: Exception) { closed=true;onFailure("Render GPU: ${e.cause?.message ?: e.message}") }
     }
@@ -137,16 +177,12 @@ class VideoRenderer(
         GLES30.glUseProgram(program)
         Matrix.setIdentityM(mvp,0)
         if(isPreview) {
-            val rotated=rotation%180!=0
-            val imageAspect=if(rotated) sourceHeight.toFloat()/sourceWidth else sourceWidth.toFloat()/sourceHeight
-            val screenAspect=w.toFloat()/h
-            Matrix.scaleM(mvp,0,if(imageAspect<screenAspect) imageAspect/screenAspect else 1f,
-                if(imageAspect>screenAspect) screenAspect/imageAspect else 1f,1f)
-            if(mirrored) Matrix.scaleM(mvp,0,-1f,1f,1f)
-            Matrix.rotateM(mvp,0,-rotation.toFloat(),0f,0f,1f)
+            val viewport=TextureGeometry.viewport(w,h,sourceWidth,sourceHeight,rotation)
+            GLES30.glViewport(viewport[0],viewport[1],viewport[2],viewport[3])
         }
         GLES30.glUniformMatrix4fv(loc("uMvp"),1,false,mvp,0)
-        GLES30.glUniformMatrix4fv(loc("uTex"),1,false,uv,0)
+        val sample=TextureGeometry.sampling(uv,sensorRotation,producerMirrored,if(isPreview) rotation else 0,isPreview && mirrored)
+        GLES30.glUniformMatrix4fv(loc("uTex"),1,false,sample,0)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0); GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,oes)
         GLES30.glUniform1i(loc("uCamera"),0)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1); GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,lutTexture)
@@ -163,16 +199,20 @@ class VideoRenderer(
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP,0,4); checkGl()
     }
     /** Real framebuffer sampling for instrumentation; this does not alter production frames. */
-    fun centerPixel(): IntArray = sync {
+    fun centerPixel(): IntArray = previewPixel(.5f,.5f)
+    fun previewPixel(x: Float,y: Float): IntArray = sync {
         current(window)
         // Read the freshly drawn back buffer before swap, which is defined on all EGL drivers.
         draw(window,width,height,true)
         val b=ByteBuffer.allocateDirect(4)
-        GLES30.glReadPixels(width/2,height/2,1,1,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,b)
+        GLES30.glReadPixels((width*x).toInt().coerceIn(0,width-1),(height*(1f-y)).toInt().coerceIn(0,height-1),1,1,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,b)
         IntArray(4) { b.get(it).toInt() and 255 }
     }
-    private fun current(surface: EGLSurface) { check(EGL14.eglMakeCurrent(display,surface,surface,context)) { "EGL current failed" } }
-    private fun loc(name: String): Int = GLES30.glGetUniformLocation(program,name)
+    private fun current(surface: EGLSurface) {
+        check(EGL14.eglMakeCurrent(display,surface,surface,context)) { "EGL current failed" }
+        EGL14.eglSwapInterval(display,0)
+    }
+    private fun loc(name: String): Int = locations.getOrPut(name) { GLES30.glGetUniformLocation(program,name) }
     private fun checkGl() { val error=GLES30.glGetError();check(error==GLES30.GL_NO_ERROR) { "OpenGL error 0x${error.toString(16)}" } }
     private fun link(v: String,f: String): Int {
         fun compile(type: Int,text: String): Int {
@@ -213,6 +253,7 @@ class VideoRenderer(
             in vec2 vUv; out vec4 color;
             void main(){
                 vec3 src=texture(uCamera,vUv).rgb; vec3 outRgb=src;
+                if(uStrength<=0. || (uUseLut==0 && uLook==0)){color=vec4(src,1.);return;}
                 if(uUseLut==1){vec3 c=clamp((src-uMin)/(uMax-uMin),0.,1.);outRgb=texture(uLut,(c*(uSize-1.)+.5)/uSize).rgb;}
                 else if(uLook==1){outRgb=pow(src,vec3(.98,1.01,1.04))*vec3(1.025,1.,.97);}
                 else if(uLook==2){float l=dot(src,vec3(.2126,.7152,.0722));outRgb=mix(vec3(l),src,.86)+vec3(-.012,.009,.015)*(1.-l);}

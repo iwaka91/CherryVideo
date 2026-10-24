@@ -12,6 +12,9 @@ import android.graphics.PixelFormat
 import android.media.ImageReader
 import android.media.MediaMetadataRetriever
 import android.media.MediaRecorder
+import android.media.MediaExtractor
+import android.media.MediaMuxer
+import android.media.MediaCodec
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -25,6 +28,7 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiSelector
 import id.tege.video.camera.VideoFiles
 import id.tege.video.camera.VideoRenderer
+import id.tege.video.camera.TextureGeometry
 import id.tege.video.core.CubeLut
 import id.tege.video.core.VideoProfile
 import org.junit.Assert.*
@@ -72,8 +76,12 @@ class QualificationTest {
             val saved=activity.lastSaved!!
             assertTrue(saved.report.getInt("frames")>=12)
             assertTrue(saved.report.getBoolean("audio"))
+            assertTrue(saved.report.getLong("videoStartUs")<500_000L)
+            assertTrue(saved.report.getLong("containerDurationMs")<10_000L)
+            assertEquals(90,saved.report.getInt("rotation"))
             context.contentResolver.openInputStream(saved.uri)!!.use { input -> File(evidence,"camera-emulator.mp4").outputStream().use { input.copyTo(it) } }
             File(evidence,"camera-emulator.json").writeText(saved.report.toString(2))
+            verifyBadTimelineIsRejected(File(evidence,"camera-emulator.mp4"))
             scenario.onActivity { it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
             Thread.sleep(1500)
             await("Landscape camera did not reopen") { activity.engine?.isReady==true }
@@ -108,13 +116,20 @@ class QualificationTest {
                 lateinit var activity: MainActivity;scenario.onActivity { activity=it }
                 await("Camera not ready") { activity.engine?.isReady==true }
                 tap(activity,"colors")
-                UiDevice.getInstance(instrumentation).findObject(UiSelector().text("＋ Impor LUT (.cube)")).click()
+                scenario.onActivity {
+                    val preview=it.window.decorView.findViewWithTag<View>("viewfinder")
+                    val dock=it.window.decorView.findViewWithTag<View>("control-host")
+                    val a=android.graphics.Rect();val b=android.graphics.Rect()
+                    assertTrue(preview.getGlobalVisibleRect(a));assertTrue(dock.getGlobalVisibleRect(b))
+                    assertTrue("LUT controls must sit below the visible preview",a.bottom<=b.top && a.height()>150)
+                }
+                UiDevice.getInstance(instrumentation).findObject(UiSelector().text("＋ Impor .cube")).click()
                 await("Imported LUT was not persisted") { context.getSharedPreferences("tege",0).getString("lut",null)==CubeLut.parse(bytes).sha256 }
                 assertTrue(monitor.hits>=1)
                 screenshot("lut-import.png")
                 val old=context.getSharedPreferences("tege",0).getString("lut",null)
                 resolver.openOutputStream(uri,"w")!!.use { it.write("LUT_3D_SIZE 33\n0 0 0".toByteArray()) }
-                UiDevice.getInstance(instrumentation).findObject(UiSelector().text("＋ Impor LUT (.cube)")).click()
+                UiDevice.getInstance(instrumentation).findObject(UiSelector().text("＋ Impor .cube")).click()
                 await("Malformed LUT did not show an import error") {
                     var shown=false
                     instrumentation.runOnMainSync { shown=activity.window.decorView.findViewWithTag<android.widget.TextView>("status").text.toString().startsWith("Impor LUT ditolak") }
@@ -137,6 +152,89 @@ class QualificationTest {
         |""".trimMargin().toByteArray()
     @Test fun gpuLutBakesIntoEncodedMp4() { verifyGpu(baked=true) }
     @Test fun monitorOnlyLutKeepsOriginalEncodedColor() { verifyGpu(baked=false) }
+    @Test fun cameraTextureRotationAndMirroringAreAppliedOnce() {
+        for(sensor in listOf(90,270)) for(producerMirror in listOf(false,true)) for(rotation in listOf(0,90,180,270)) for(front in listOf(false,true)) {
+            val producer=TextureGeometry.cameraTransform(sensor,producerMirror)
+            val actual=TextureGeometry.sampling(producer,sensor,producerMirror,rotation,front)
+            assertArrayEquals("sensor=$sensor rotation=$rotation front=$front",TextureGeometry.cameraTransform(rotation,front),actual,.0001f)
+            val encoded=TextureGeometry.sampling(producer,sensor,producerMirror,0,false)
+            assertArrayEquals(TextureGeometry.cameraTransform(0,false),encoded,.0001f)
+        }
+        assertArrayEquals(intArrayOf(30,0,180,320),TextureGeometry.viewport(240,320,1920,1080,90))
+        assertArrayEquals(intArrayOf(0,30,320,180),TextureGeometry.viewport(320,240,1920,1080,0))
+    }
+    @Test fun gpuPreviewQuadrantsStayUprightAcrossDeviceRotations() {
+        val reader=ImageReader.newInstance(400,400,PixelFormat.RGBA_8888,4)
+        reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))
+        var failure: String?=null
+        val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
+        try {
+            val canvas=renderer.input.lockCanvas(null)
+            val paint=android.graphics.Paint()
+            listOf(Color.RED,Color.GREEN,Color.BLUE,Color.YELLOW).forEachIndexed { i,c ->
+                paint.color=c;val x=(i%2)*160f;val y=(i/2)*120f;canvas.drawRect(x,y,x+160f,y+120f,paint)
+            }
+            renderer.input.unlockCanvasAndPost(canvas);Thread.sleep(700)
+            val expected=listOf(
+                listOf(Color.RED,Color.GREEN,Color.BLUE,Color.YELLOW),
+                listOf(Color.BLUE,Color.RED,Color.YELLOW,Color.GREEN),
+                listOf(Color.YELLOW,Color.BLUE,Color.GREEN,Color.RED),
+                listOf(Color.GREEN,Color.YELLOW,Color.RED,Color.BLUE))
+            for(turn in 0..3) for(front in listOf(false,true)) {
+                renderer.resize(400,400,turn*90,front)
+                val colors=expected[turn].let { if(front) listOf(it[1],it[0],it[3],it[2]) else it }
+                listOf(.3f to .25f,.7f to .25f,.3f to .75f,.7f to .75f).forEachIndexed { i,(x,y) ->
+                    val pixel=renderer.previewPixel(x,y);val c=colors[i]
+                    assertTrue("rotation=${turn*90} front=$front quadrant=$i pixel=${pixel.toList()}",
+                        kotlin.math.abs(pixel[0]-Color.red(c))<50 && kotlin.math.abs(pixel[1]-Color.green(c))<50 && kotlin.math.abs(pixel[2]-Color.blue(c))<50)
+                }
+            }
+            assertNull(failure)
+        } finally { renderer.close();reader.close() }
+    }
+    @Test fun selectedValuesAndReadableAbout() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var activity: MainActivity;scenario.onActivity { activity=it }
+            await("Camera not ready") { activity.engine?.isReady==true }
+            tap(activity,"colors");tap(activity,"look-2")
+            scenario.onActivity { assertTrue(it.window.decorView.findViewWithTag<android.widget.TextView>("lut-active").text.contains("Teal")) }
+            screenshot("lut-dock.png");tap(activity,"close-lut")
+            scenario.onActivity {
+                assertTrue(it.window.decorView.findViewWithTag<Button>("colors").text.contains("Teal"))
+                assertTrue(it.window.decorView.findViewWithTag<Button>("audio").text.contains("Kamera"))
+            }
+            tap(activity,"stabilization")
+            UiDevice.getInstance(instrumentation).findObject(UiSelector().text("OFF")).click()
+            scenario.onActivity { assertTrue(it.window.decorView.findViewWithTag<Button>("stabilization").text.contains("OFF")) }
+            tap(activity,"settings");tap(activity,"about")
+            assertTrue(UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Cherry Video")).exists())
+            assertFalse(UiDevice.getInstance(instrumentation).findObject(UiSelector().textContains("TERMS AND CONDITIONS")).exists())
+            screenshot("about.png")
+        }
+    }
+    private fun verifyBadTimelineIsRejected(original: File) {
+        val bad=File(context.cacheDir,"bad-clock.mp4")
+        val extractor=MediaExtractor();val muxer=MediaMuxer(bad.absolutePath,MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        try {
+            extractor.setDataSource(original.absolutePath)
+            val videoIndices=HashSet<Int>();val tracks=HashMap<Int,Int>()
+            for(i in 0 until extractor.trackCount) {
+                val f=extractor.getTrackFormat(i);tracks[i]=muxer.addTrack(f);extractor.selectTrack(i)
+                if(f.getString("mime")!!.startsWith("video/")) videoIndices.add(i)
+            }
+            muxer.start()
+            val buffer=java.nio.ByteBuffer.allocateDirect(4*1024*1024);val info=MediaCodec.BufferInfo()
+            while(extractor.sampleTrackIndex>=0) {
+                val index=extractor.sampleTrackIndex;buffer.clear()
+                val size=extractor.readSampleData(buffer,0);if(size<0) break
+                info.set(0,size,extractor.sampleTime+if(index in videoIndices) 15_070_000_000L else 0L,extractor.sampleFlags)
+                muxer.writeSampleData(tracks.getValue(index),buffer,info);if(!extractor.advance()) break
+            }
+            muxer.stop()
+        } finally { extractor.release();muxer.release() }
+        assertThrows(IllegalStateException::class.java) { VideoFiles.inspect(bad,VideoProfile(1280,720,30),true) }
+        bad.delete()
+    }
     @Suppress("DEPRECATION")
     private fun verifyGpu(baked: Boolean) {
         val reader=ImageReader.newInstance(320,240,PixelFormat.RGBA_8888,4)
@@ -155,8 +253,11 @@ class QualificationTest {
             recorder.setOutputFile(file.absolutePath);recorder.prepare();recorder.start()
             val surface=recorder.surface
             renderer.attachEncoder(surface)
-            repeat(55) {
-                val canvas=renderer.input.lockCanvas(null);canvas.drawColor(Color.RED);renderer.input.unlockCanvasAndPost(canvas)
+            repeat(70) { index ->
+                val canvas=renderer.input.lockCanvas(null);canvas.drawColor(Color.RED)
+                val paint=android.graphics.Paint().apply { color=Color.WHITE }
+                val x=(index%60)*4f;canvas.drawRect(x,180f,x+35f,230f,paint)
+                renderer.input.unlockCanvasAndPost(canvas)
                 Thread.sleep(34)
             }
             val pixel=renderer.centerPixel()
@@ -170,6 +271,14 @@ class QualificationTest {
             try {
                 retriever.setDataSource(file.absolutePath)
                 val bitmap=retriever.getFrameAtTime(500000,MediaMetadataRetriever.OPTION_CLOSEST)!!
+                val later=retriever.getFrameAtTime((report.getLong("containerDurationMs")-250)*1000,MediaMetadataRetriever.OPTION_CLOSEST)!!
+                var changed=0
+                for(y in 3*bitmap.height/4 until bitmap.height step 4) for(x in 0 until bitmap.width step 4) {
+                    val a=bitmap.getPixel(x,y);val b=later.getPixel(x*later.width/bitmap.width,y*later.height/bitmap.height)
+                    if(kotlin.math.abs(Color.blue(a)-Color.blue(b))>80) changed++
+                }
+                assertTrue("Playback must show motion at distinct presentation times",changed>15)
+                later.recycle()
                 val center=bitmap.getPixel(bitmap.width/2,bitmap.height/2)
                 if(baked) assertTrue("Encoded LUT is missing",Color.green(center)>150 && Color.red(center)<70)
                 else assertTrue("Monitor-only altered encoded source",Color.red(center)>150 && Color.green(center)<70)

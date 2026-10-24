@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-mkdir -p build/device-evidence
+evidence_path="${1:-build/device-evidence/api35}"
+mkdir -p "$evidence_path"
 bash gradlew --no-daemon :app:connectedDebugAndroidTest || {
-  adb logcat -d -v threadtime > build/device-evidence/logcat.txt
+  adb logcat -d -v threadtime > "$evidence_path/logcat.txt"
   adb shell screencap -p /sdcard/qualification-failure.png
-  adb pull /sdcard/qualification-failure.png build/device-evidence/ || true
-  adb pull /sdcard/Android/data/id.tege.video/files/qualification/. build/device-evidence/ || true
+  adb pull /sdcard/qualification-failure.png "$evidence_path/" || true
+  adb pull /sdcard/Android/data/id.tege.video/files/qualification/. "$evidence_path/" || true
   exit 1
 }
-adb pull /sdcard/Android/data/id.tege.video/files/qualification/. build/device-evidence/
-adb logcat -d -v threadtime > build/device-evidence/logcat.txt
-adb shell dumpsys package id.tege.video > build/device-evidence/package.txt
+adb pull /sdcard/Android/data/id.tege.video/files/qualification/. "$evidence_path/"
+adb logcat -d -v threadtime > "$evidence_path/logcat.txt"
+adb shell dumpsys package id.tege.video > "$evidence_path/package.txt"
+cp -R app/build/outputs/androidTest-results "$evidence_path/test-results"

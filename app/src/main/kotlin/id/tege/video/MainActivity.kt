@@ -38,6 +38,14 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private lateinit var quality: Button
     private lateinit var colors: Button
     private lateinit var lens: Button
+    private lateinit var stable: Button
+    private lateinit var audioButton: Button
+    private lateinit var controlHost: FrameLayout
+    private lateinit var normalControls: LinearLayout
+    private var colorDock=false
+    private var colorTitle: TextView?=null
+    private val lookButtons=ArrayList<Button>()
+    private var qualityOptions=emptyList<VideoProfile>()
     private lateinit var proRow: LinearLayout
     private lateinit var grid: GridOverlay
     private var cameras=emptyList<CameraEntry>()
@@ -81,7 +89,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
                 val db=if(amp>0) (20*log10(amp/32767.0)).coerceAtLeast(-60.0).toInt() else -60
                 detail.text=String.format(Locale.US,"REC %02d:%02d · %s · %s",elapsed/60,elapsed%60,if(audio==0) "Tanpa audio" else "$db dBFS",storageLabel())
                 if(StatFs(filesDir.path).availableBytes<150L*1024*1024) e.stop()
-            } else if(!uiRecording) detail.text="${if(bake) "Warna tersimpan" else "LUT pratinjau"} · ${storageLabel()} · ${thermalLabel()}"
+            } else if(!uiRecording) {
+                val fps=e?.previewStats?.optDouble("previewSubmittedFps",0.0) ?: 0.0
+                detail.text="${if(fps>0) String.format(Locale.US,"Preview %.0f fps · ",fps) else ""}${if(bake) "Warna ke video" else "LUT pratinjau"} · ${storageLabel()} · ${thermalLabel()}"
+            }
             main.postDelayed(this,500)
         }
     }
@@ -89,10 +100,14 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         pro=prefs.getBoolean("pro",false);hevc=prefs.getBoolean("hevc",false);audio=prefs.getInt("audio",1)
+        controls=Controls(stabilization=prefs.getInt("stabilization",-1))
+        cameraIndex=prefs.getInt("cameraIndex",0)
+        selected=VideoProfile(prefs.getInt("width",1920),prefs.getInt("height",1080),prefs.getInt("fps",30),prefs.getInt("captureFps",30))
         look=prefs.getInt("look",0);strength=prefs.getFloat("strength",1f);bake=prefs.getBoolean("bake",true)
         val stored=prefs.getString("lut",null)
         if(stored!=null) runCatching { lut=CubeLut.parse(File(filesDir,"luts/$stored.cube").readBytes());lutName=prefs.getString("lutName","LUT Saya").orEmpty() }
         cameras=runCatching { CameraCatalog.list(this) }.getOrDefault(emptyList())
+        cameraIndex=cameraIndex.coerceIn(0,(cameras.size-1).coerceAtLeast(0))
         buildUi()
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.CAMERA,Manifest.permission.RECORD_AUDIO),1)
@@ -102,6 +117,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun shape(color: Int,radius: Int=14)=GradientDrawable().apply { setColor(color);cornerRadius=dp(radius).toFloat() }
     private fun button(value: String,tagName: String,action: ()->Unit)=Button(this).apply {
         text=value;tag=tagName;textSize=12f;isAllCaps=false;setTextColor(Color.WHITE);minWidth=0;minimumWidth=0
+        maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END
         setPadding(dp(9),0,dp(9),0);background=shape(Color.rgb(34,42,47),12)
         setOnClickListener { action() }
         contentDescription=value
@@ -113,6 +129,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun buildUi() {
         rebuilding=true
         val landscape=resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
+        colorDock=false;colorTitle=null;lookButtons.clear()
         val root=LinearLayout(this).apply {
             orientation=if(landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(16,19,21));setPadding(dp(10),dp(8),dp(10),dp(8))
@@ -130,7 +147,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         preview=SurfaceView(this).apply { holder.addCallback(this@MainActivity);tag="viewfinder" }
         grid=GridOverlay(this)
         val frame=FrameLayout(this).apply { addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1)) }
-        val panel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+        val panel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL };normalControls=panel
+        controlHost=FrameLayout(this).apply { tag="control-host";addView(panel) }
         mode=button(if(pro) "Pro" else "Simple","mode") {
             if(locked()) return@button
             pro=!pro
@@ -138,21 +156,22 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             prefs.edit().putBoolean("pro",pro).apply();mode.text=if(pro) "Pro" else "Simple"
             proRow.visibility=if(pro) View.VISIBLE else View.GONE
         }
-        val title=text("TeGe Video",20f,gold).apply { typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL) }
+        val title=text("Cherry Video",20f,gold).apply { tag="app-title";typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL) }
         val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;addView(title,LinearLayout.LayoutParams(0,dp(48),1f));addView(mode,LinearLayout.LayoutParams(dp(80),dp(42))) }
         status=text("Menyiapkan kamera…",13f,gold).apply { tag="status";maxLines=3 }
         detail=text("1080p · cinematic video",11f,muted)
         lens=button("Kamera utama","lens") { chooseLens() }
         quality=button(selected.label,"quality") { chooseQuality() }
         colors=button("Warna / LUT","colors") { showColors() }
-        val stable=button("Stabilisasi","stabilization") { showStabilization() }
-        val audioButton=button("Audio","audio") { showAudio() }
+        stable=button("Stabilisasi","stabilization") { showStabilization() }
+        audioButton=button("Audio","audio") { showAudio() }
         val settings=button("Pengaturan","settings") { showSettings() }
         proRow=LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL;visibility=if(pro) View.VISIBLE else View.GONE
             addView(row(button("Fokus / Pull","focus") { showFocus() },button("Exposure","exposure") { showExposure() },button("WB","white-balance") { showWhiteBalance() }))
         }
         record=button("●  REKAM","record") {
+            if(colorDock) closeColors()
             val e=engine ?: return@button
             if(e.isRecording) { record.isEnabled=false;onStatus("Menyimpan dan memeriksa video…");e.stop() }
             else if(e.isReady && !e.busy) { record.isEnabled=false;onStatus("Memulai rekaman…");e.start(audio) }
@@ -168,19 +187,33 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             root.addView(frame,LinearLayout.LayoutParams(0,-1,1f))
             val sidebar=LinearLayout(this).apply {
                 orientation=LinearLayout.VERTICAL;addView(header);addView(status);addView(detail)
-                addView(ScrollView(this@MainActivity).apply { addView(panel) },LinearLayout.LayoutParams(-1,0,1f))
+                addView(ScrollView(this@MainActivity).apply { addView(controlHost) },LinearLayout.LayoutParams(-1,0,1f))
                 addView(recordRow)
             }
             root.addView(sidebar,LinearLayout.LayoutParams(dp(254),-1))
         } else {
             root.addView(header);root.addView(status);root.addView(detail)
             root.addView(frame,LinearLayout.LayoutParams(-1,0,1f))
-            root.addView(panel);root.addView(recordRow)
+            root.addView(controlHost);root.addView(recordRow)
         }
-        setContentView(root);root.requestApplyInsets();rebuilding=false
+        setContentView(root);root.requestApplyInsets();updateSelectionLabels();rebuilding=false
     }
     private fun storageLabel(): String=String.format(Locale.US,"%.1f GB kosong",StatFs(filesDir.path).availableBytes/1_073_741_824.0)
     private fun thermalLabel()=when { thermal>=3 -> "Panas";thermal>=1 -> "Suhu meningkat";else -> "Suhu normal" }
+    private fun gradeLabel()=if(lut!=null) lutName else arrayOf("Natural","Hangat","Teal","Mono").getOrElse(look) { "Natural" }
+    private fun stabilizationLabel()=when(controls.stabilization) { 1->"OIS";2->"EIS";else->"OFF" }
+    private fun audioLabel()=when(audio) { 1->"Kamera";2->"Kabel/USB";else->"OFF" }
+    private fun updateSelectionLabels() {
+        colors.text="LUT · ${gradeLabel()}";colors.contentDescription=colors.text
+        stable.text="Stabilisasi · ${stabilizationLabel()}";stable.contentDescription=stable.text
+        audioButton.text="Audio · ${audioLabel()}";audioButton.contentDescription=audioButton.text
+        colorTitle?.text="${gradeLabel()} · ${(strength*100).toInt()}%"
+        lookButtons.forEachIndexed { index,b ->
+            val active=lut==null && look==index
+            b.isSelected=active;b.background=shape(if(active) gold else Color.rgb(34,42,47),10)
+            b.setTextColor(if(active) Color.rgb(16,19,21) else Color.WHITE)
+        }
+    }
     private fun rotation(): Int {
         val c=cameras.getOrNull(cameraIndex) ?: return 0
         @Suppress("DEPRECATION") val displayDegrees=when(windowManager.defaultDisplay.rotation) { Surface.ROTATION_90->90;Surface.ROTATION_180->180;Surface.ROTATION_270->270;else->0 }
@@ -190,11 +223,14 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(!resumed || engine!=null || retiringEngines>0 || !preview.holder.surface.isValid || cameras.isEmpty()) return
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) { onStatus("Berikan izin Kamera melalui Pengaturan Android untuk merekam.");return }
         val camera=cameras[cameraIndex]
-        val options=camera.profiles(hevc)
+        val options=camera.profiles(hevc);qualityOptions=options
         if(options.isEmpty()) { onError("Tidak ada profil video standar yang memenuhi batas kamera dan encoder.");return }
         if(selected !in options) { selected=options.first();onStatus("Profil tersedia: ${selected.label}") }
         quality.text=selected.label;lens.text=if(camera.id=="0") "Utama · 1×" else if(camera.front) "Depan" else "Kamera ${camera.id}"
         if(controls.stabilization<0) controls=controls.copy(stabilization=if(camera.ois) 1 else if(camera.eis) 2 else 0)
+        if(selected.highSpeed) controls=controls.copy(stabilization=0,focus=null,iso=0,shutterNs=0)
+        prefs.edit().putInt("width",selected.width).putInt("height",selected.height).putInt("fps",selected.fps).putInt("captureFps",selected.captureFps).apply()
+        updateSelectionLabels()
         val e=CameraEngine(applicationContext,this);engine=e
         e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation())
         e.update(controls);e.grade(lut,strength,bake,look)
@@ -227,6 +263,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     override fun onRequestPermissionsResult(requestCode: Int,permissions: Array<out String>,results: IntArray) {
         super.onRequestPermissionsResult(requestCode,permissions,results)
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) audio=0
+        updateSelectionLabels()
         startCamera()
     }
     override fun onStatus(message: String) {
@@ -260,20 +297,22 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun chooseLens() {
         if(locked()) return
         AlertDialog.Builder(this).setTitle("Pilih kamera").setSingleChoiceItems(cameras.map { it.label }.toTypedArray(),cameraIndex) { dialog,index ->
-            cameraIndex=index;controls=Controls();focusA=0f;focusB=0f;dialog.dismiss();restart()
+            cameraIndex=index;prefs.edit().putInt("cameraIndex",index).apply();controls=Controls();focusA=0f;focusB=0f;dialog.dismiss();restart()
         }.setNegativeButton("Tutup",null).show()
     }
     private fun chooseQuality() {
         if(locked()) return
-        val options=cameras.getOrNull(cameraIndex)?.profiles(hevc).orEmpty()
-        AlertDialog.Builder(this).setTitle("Kualitas video").setSingleChoiceItems(options.map { it.label }.toTypedArray(),options.indexOf(selected)) { dialog,index ->
+        val options=qualityOptions
+        val camera=cameras.getOrNull(cameraIndex) ?: return
+        AlertDialog.Builder(this).setTitle("${if(camera.front) "Depan" else "Belakang"} · ID ${camera.id} · ${if(hevc) "HEVC" else "AVC"}")
+            .setSingleChoiceItems(options.map { it.label+if(it.highSpeed) " · HS (uji)" else "" }.toTypedArray(),options.indexOf(selected)) { dialog,index ->
             selected=options[index];dialog.dismiss();restart()
-        }.setPositiveButton("Info") { _,_ -> message("Dukungan video","60 fps hanya ditampilkan jika tersedia pada sesi Camera2 standar dan encoder. Setelah merekam, FPS aktual diperiksa dari timestamp file. Sesi high-speed khusus belum tersedia.") }
+        }.setPositiveButton("Info") { _,_ -> message("Dukungan video","Mode tersedia ditentukan per kamera dan codec. 4K hanya ditampilkan pada kamera yang mendukungnya. Mode 60 fps memakai sesi standar bila tersedia, atau high-speed 120+ fps yang disampel menjadi video 60 fps dengan waktu normal. Pada high-speed kontrol manual dan stabilisasi dinonaktifkan. Keberhasilan dan FPS aktual harus diuji di perangkat; buka Diagnostik untuk rincian dukungan.") }
             .setNegativeButton("Tutup",null).show()
     }
     private fun body()=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(16),dp(8),dp(16),dp(12)) }
     private fun sheet(title: String,body: View): AlertDialog = AlertDialog.Builder(this).setTitle(title).setView(ScrollView(this).apply { addView(body) }).setNegativeButton("Selesai",null).show()
-    private fun message(title: String,value: String) { sheet(title,text(value,14f).apply { setTextIsSelectable(true) }) }
+    private fun message(title: String,value: String) { sheet(title,body().apply { addView(text(value,14f).apply { setTextIsSelectable(true) }) }) }
     private fun slider(panel: LinearLayout,title: String,initial: Int,max: Int,change: (Int,TextView)->Unit) {
         val label=text(title);panel.addView(label)
         panel.addView(SeekBar(this).apply {
@@ -290,21 +329,43 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun persistGrade() {
         prefs.edit().putInt("look",look).putFloat("strength",strength).putBoolean("bake",bake).putString("lut",lut?.sha256).putString("lutName",lutName).apply()
         engine?.grade(lut,strength,bake,look)
+        updateSelectionLabels()
     }
     private fun showColors() {
         if(locked()) return
         val panel=body()
-        panel.addView(text("Aktif: ${if(lut!=null) lutName else arrayOf("Natural","Cinema hangat","Teal lembut","Monokrom")[look]}",15f,gold))
-        val looks=arrayOf("Natural","Cinema hangat","Teal lembut","Monokrom")
-        looks.forEachIndexed { index,name -> panel.addView(button(name,"look-$index") { lut=null;lutName="";look=index;persistGrade();onStatus("Warna: $name") },LinearLayout.LayoutParams(-1,dp(45)).apply { bottomMargin=dp(5) }) }
-        panel.addView(button("＋ Impor LUT (.cube)","import-lut") {
+        panel.tag="lut-dock";lookButtons.clear()
+        colorTitle=text("",14f,gold).apply { tag="lut-active";maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END }
+        panel.addView(LinearLayout(this).apply {
+            gravity=Gravity.CENTER_VERTICAL;addView(colorTitle,LinearLayout.LayoutParams(0,dp(38),1f))
+            addView(button("Tutup","close-lut") { closeColors() },LinearLayout.LayoutParams(dp(64),dp(38)))
+        })
+        val lookRow=LinearLayout(this)
+        arrayOf("Natural","Hangat","Teal","Mono").forEachIndexed { index,name ->
+            val b=button(name,"look-$index") { lut=null;lutName="";look=index;persistGrade();onStatus("Warna: $name") }
+            lookButtons.add(b);lookRow.addView(b,LinearLayout.LayoutParams(dp(88),dp(40)).apply { rightMargin=dp(5) })
+        }
+        panel.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled=false;addView(lookRow) })
+        val import=button("＋ Impor .cube","import-lut") {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type="*/*";addCategory(Intent.CATEGORY_OPENABLE) },100)
-        },LinearLayout.LayoutParams(-1,dp(48)))
-        panel.addView(button("LUT Saya","my-luts") { showLutLibrary() },LinearLayout.LayoutParams(-1,dp(48)).apply { topMargin=dp(5) })
+        }
+        panel.addView(row(import,button("LUT Saya","my-luts") { showLutLibrary() },button("Info","lut-info") {
+            message("Format LUT","Impor .cube 3D ukuran 2–33 (termasuk 17³/33³), maksimal 4 MB. Gunakan LUT kreatif SDR / Rec.709. LUT konversi Log/HDR memerlukan profil sumber yang cocok. LUT 1D, shaper dan 65³ belum didukung.\n\nJika Terapkan ke video dimatikan, warna hanya tampak di preview.")
+        }))
         slider(panel,"Intensitas ${(strength*100).toInt()}%",(strength*100).toInt(),100) { value,label -> strength=value/100f;label.text="Intensitas $value%";persistGrade() }
-        check(panel,"Terapkan warna ke video",bake) { bake=it;persistGrade() }
-        panel.addView(text("Jika dimatikan, warna hanya terlihat pada pratinjau. Gunakan LUT kreatif untuk SDR / Rec.709. LUT konversi S-Log, C-Log, V-Log atau HDR memerlukan profil sumber yang cocok.\nFormat: .cube 3D, ukuran 2–33 (termasuk 17³/33³), maksimal 4 MB. LUT 1D, shaper dan 65³ belum didukung.",12f,muted))
-        sheet("Warna sinematik & LUT",panel)
+        check(panel,"Terapkan ke video",bake) { bake=it;persistGrade() }
+        controlHost.removeAllViews()
+        if(resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE) controlHost.addView(panel)
+        else {
+            controlHost.layoutParams.height=dp(260)
+            controlHost.addView(ScrollView(this).apply { addView(panel) },FrameLayout.LayoutParams(-1,-1))
+        }
+        colorDock=true;updateSelectionLabels();controlHost.requestLayout()
+    }
+    private fun closeColors() {
+        controlHost.removeAllViews();controlHost.addView(normalControls)
+        controlHost.layoutParams.height=ViewGroup.LayoutParams.WRAP_CONTENT
+        colorDock=false;colorTitle=null;lookButtons.clear();controlHost.requestLayout()
     }
     private fun showLutLibrary() {
         val directory=File(filesDir,"luts").apply { mkdirs() }
@@ -363,22 +424,25 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun showStabilization() {
         if(locked()) return
         val c=cameras.getOrNull(cameraIndex) ?: return
-        val options=mutableListOf("Mati" to 0)
+        if(selected.highSpeed) { message("Stabilisasi","Mode high-speed menggunakan OFF. Pilih 30 fps untuk memakai OIS atau EIS.");return }
+        val options=mutableListOf("OFF" to 0)
         if(c.ois) options.add("Optik (OIS)" to 1)
         if(c.eis) options.add("Video (EIS)" to 2)
         AlertDialog.Builder(this).setTitle("Stabilisasi").setSingleChoiceItems(options.map { it.first }.toTypedArray(),options.indexOfFirst { it.second==controls.stabilization }) { dialog,index ->
-            controls=controls.copy(stabilization=options[index].second);engine?.update(controls);dialog.dismiss();onStatus("Stabilisasi: ${options[index].first}")
+            controls=controls.copy(stabilization=options[index].second);engine?.update(controls)
+            prefs.edit().putInt("stabilization",controls.stabilization).apply();updateSelectionLabels();dialog.dismiss();onStatus("Stabilisasi: ${options[index].first}")
         }.setNegativeButton("Tutup",null).show()
     }
     private fun showAudio() {
         if(locked()) return
         AlertDialog.Builder(this).setTitle("Sumber audio").setSingleChoiceItems(arrayOf("Tanpa audio","Mikrofon kamera","Mikrofon kabel / USB"),audio) { dialog,index ->
             if(index!=0 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),2)
-            else { audio=index;prefs.edit().putInt("audio",audio).apply();onStatus("Audio: ${arrayOf("tanpa audio","mikrofon kamera","mikrofon kabel / USB")[index]}") }
+            else { audio=index;prefs.edit().putInt("audio",audio).apply();updateSelectionLabels();onStatus("Audio: ${arrayOf("tanpa audio","mikrofon kamera","mikrofon kabel / USB")[index]}") }
             dialog.dismiss()
         }.setNegativeButton("Tutup",null).show()
     }
     private fun showFocus() {
+        if(selected.highSpeed) { message("Fokus","Sesi high-speed memakai autofocus otomatis. Gunakan 30 fps untuk kontrol fokus manual.");return }
         val c=cameras.getOrNull(cameraIndex) ?: return
         if(c.minFocus<=0) { message("Fokus","Kamera ini tidak menawarkan lensa fokus yang bisa digerakkan.");return }
         val panel=body()
@@ -395,6 +459,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         sheet("Fokus & focus pull",panel)
     }
     private fun showExposure() {
+        if(selected.highSpeed) { message("Exposure","Sesi high-speed memakai exposure otomatis. Gunakan 30 fps untuk ISO dan shutter manual.");return }
         val c=cameras.getOrNull(cameraIndex) ?: return
         val panel=body()
         check(panel,"Exposure manual",controls.iso>0,c.manual) { enabled ->
@@ -424,6 +489,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         sheet("Exposure",panel)
     }
     private fun showWhiteBalance() {
+        if(selected.highSpeed) { message("White balance","Sesi high-speed memakai white balance otomatis.");return }
         val c=cameras.getOrNull(cameraIndex) ?: return
         val panel=body()
         val available=c.characteristics[C.CONTROL_AWB_AVAILABLE_MODES] ?: intArrayOf()
@@ -443,21 +509,51 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
         check(panel,"Grid komposisi",grid.enabledGrid) { grid.enabledGrid=it;grid.invalidate() }
         check(panel,"Lampu kontinu",controls.torch,cameras.getOrNull(cameraIndex)?.characteristics?.get(C.FLASH_INFO_AVAILABLE)==true) { controls=controls.copy(torch=it);engine?.update(controls) }
-        panel.addView(text("Penyimpanan: Movies/TeGeVideo\n${storageLabel()}\nSaat aplikasi masuk latar atau layar dikunci, rekaman dihentikan dan disimpan. Jaga aplikasi tetap terbuka untuk merekam. Suhu berat dan ruang menipis memicu penyimpanan otomatis.",13f,muted))
+        panel.addView(text("Penyimpanan: Movies/CherryVideo\n${storageLabel()}\nSaat aplikasi masuk latar atau layar dikunci, rekaman dihentikan dan disimpan. Jaga aplikasi tetap terbuka untuk merekam. Suhu berat dan ruang menipis memicu penyimpanan otomatis.",13f,muted))
         panel.addView(button("Diagnostik perangkat & FPS","diagnostics") { showDiagnostics() },LinearLayout.LayoutParams(-1,dp(48)))
-        panel.addView(button("Tentang TeGe Video","about") {
-            message("TeGe Video ${BuildConfig.VERSION_NAME}","Kamera video sinematik untuk Xiaomi 13T.\nDikembangkan untuk Toto Gutomo.\n\nCubeLut dan FocusPull diadaptasi dari OpenCineCam, Copyright 2026 OpenCineCam contributors, Apache License 2.0.\nhttps://github.com/LibreStatic/opencinecam\n\nSource & lisensi:\nhttps://github.com/iwaka91/CherryVideo\n\n${assets.open("LICENSE").bufferedReader().use { it.readText() }}")
-        },LinearLayout.LayoutParams(-1,dp(48)).apply { topMargin=dp(5) })
-        sheet("Pengaturan",panel)
+        val about=button("Tentang Cherry Video","about") {}
+        panel.addView(about,LinearLayout.LayoutParams(-1,dp(48)).apply { topMargin=dp(5) })
+        val dialog=sheet("Pengaturan",panel)
+        about.setOnClickListener { dialog.dismiss();showAbout() }
+    }
+    private fun showAbout() {
+        val panel=body().apply { tag="about-content" }
+        panel.addView(text("Cherry Video",22f,gold))
+        panel.addView(text("Versi ${BuildConfig.VERSION_NAME}",13f,muted))
+        panel.addView(text("Kamera video sinematik untuk Xiaomi 13T.\nDikembangkan untuk Toto Gutomo.",15f))
+        panel.addView(text("Komponen open source",16f,gold))
+        panel.addView(text("CubeLut dan FocusPull diadaptasi dari OpenCineCam.\nCopyright 2026 OpenCineCam contributors.\nApache License 2.0.",14f))
+        panel.addView(button("Source Cherry Video","source-link") { openLink("https://github.com/iwaka91/CherryVideo") },LinearLayout.LayoutParams(-1,dp(46)))
+        panel.addView(button("Source OpenCineCam","upstream-link") { openLink("https://github.com/LibreStatic/opencinecam") },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(6) })
+        panel.addView(button("Baca lisensi lengkap","license") {
+            val raw=assets.open("LICENSE").bufferedReader().use { it.readText() }
+            val readable=raw.split(Regex("\\n\\s*\\n")).joinToString("\n\n") { p -> p.lines().joinToString(" ") { it.trim() } }
+            message("Apache License 2.0",readable)
+        },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(6) })
+        sheet("Tentang",panel)
+    }
+    private fun openLink(url: String) {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url))) }.onFailure { onError("Tidak ada aplikasi pembuka tautan.") }
     }
     private fun showDiagnostics() {
         val last=File(filesDir,"last-recording.json").takeIf { it.exists() }?.readText()
         exportJson=JSONObject().put("device","${Build.MANUFACTURER} ${Build.MODEL}").put("api",Build.VERSION.SDK_INT)
             .put("version",BuildConfig.VERSION_NAME).put("cameras",JSONArray(cameras.map { it.report() }))
+            .put("physicalCameras",CameraCatalog.physicalReport(this,cameras)).put("preview",engine?.previewStats)
+            .put("selectedCamera",cameras.getOrNull(cameraIndex)?.id).put("selectedProfile",selected.label).put("codec",if(hevc) "HEVC" else "AVC")
             .put("lastRecording",last?.let { JSONObject(it) } ?: JSONObject.NULL).toString(2)
-        AlertDialog.Builder(this).setTitle("Diagnostik").setMessage(exportJson).setPositiveButton("Ekspor JSON") { _,_ ->
-            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"TeGeVideo-diagnostik.json") },101)
-        }.setNegativeButton("Tutup",null).show()
+        val panel=body()
+        val p=engine?.previewStats ?: JSONObject()
+        panel.addView(text("${Build.MANUFACTURER} ${Build.MODEL}\nAndroid API ${Build.VERSION.SDK_INT} · ${BuildConfig.VERSION_NAME}",15f,gold))
+        panel.addView(text("Kamera ${cameras.getOrNull(cameraIndex)?.id} · ${selected.label} · ${if(hevc) "HEVC" else "AVC"}\n${String.format(Locale.US,"Preview %.1f fps · render %.1f ms\nJeda frame maksimum %.1f ms",p.optDouble("previewSubmittedFps",0.0),p.optDouble("averageRenderMs",0.0),p.optDouble("maxArrivalGapMs",0.0))}",14f))
+        cameras.forEach { c ->
+            panel.addView(text("${c.label}\nSensor ${c.rotation}° · fokus 0–${c.minFocus} D\nOIS ${c.ois} · EIS ${c.eis}\nAVC: ${c.profiles(false).joinToString { it.label }}\nHEVC: ${c.profiles(true).joinToString { it.label }}\nHigh-speed 1080: ${c.highSpeedRates(1920,1080).joinToString().ifEmpty { "tidak dilaporkan" }}",13f))
+        }
+        panel.addView(button("JSON lengkap","diagnostic-json") { message("Diagnostik JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)))
+        panel.addView(button("Ekspor JSON","export-diagnostic") {
+            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"CherryVideo-diagnostik.json") },101)
+        },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
+        sheet("Diagnostik",panel)
     }
     private fun showGallery() {
         if(locked()) return
@@ -465,12 +561,12 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             runCatching {
                 val items=ArrayList<Pair<String,Uri>>()
                 contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,arrayOf(MediaStore.Video.Media._ID,MediaStore.Video.Media.DISPLAY_NAME),
-                    "${MediaStore.Video.Media.RELATIVE_PATH} = ?",arrayOf("Movies/TeGeVideo/"),"${MediaStore.Video.Media.DATE_ADDED} DESC")?.use { c ->
+                    "${MediaStore.Video.Media.RELATIVE_PATH} IN (?, ?)",arrayOf("Movies/CherryVideo/","Movies/TeGeVideo/"),"${MediaStore.Video.Media.DATE_ADDED} DESC")?.use { c ->
                     while(c.moveToNext() && items.size<100) items.add(c.getString(1) to ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,c.getLong(0)))
                 };items
             }.onSuccess { items -> main.post {
-                if(items.isEmpty()) message("Galeri","Belum ada rekaman TeGe Video.")
-                else AlertDialog.Builder(this).setTitle("Video TeGe").setItems(items.map { it.first }.toTypedArray()) { _,index ->
+                if(items.isEmpty()) message("Galeri","Belum ada rekaman Cherry Video.")
+                else AlertDialog.Builder(this).setTitle("Video Cherry").setItems(items.map { it.first }.toTypedArray()) { _,index ->
                     runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(items[index].second,"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
                         .onFailure { onError("Pasang pemutar video untuk membuka rekaman.") }
                 }.setNegativeButton("Tutup",null).show()
@@ -480,7 +576,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     @Deprecated("Legacy Activity API")
     override fun onBackPressed() {
         if(engine?.isRecording==true) AlertDialog.Builder(this).setTitle("Simpan dan keluar?").setMessage("Rekaman akan dihentikan dan disimpan.").setPositiveButton("Simpan") { _,_ -> engine?.stop() }.setNegativeButton("Lanjut merekam",null).show()
-        else super.onBackPressed()
+        else if(colorDock) closeColors() else super.onBackPressed()
     }
 }
 
