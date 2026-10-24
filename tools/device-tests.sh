@@ -22,10 +22,10 @@ if [[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" == "1" ]]; then
   trap 'kill "$injection_pid" 2>/dev/null || true' EXIT
 fi
 bash gradlew --no-daemon :app:connectedDebugAndroidTest || {
-  adb logcat -d -v threadtime > "$evidence_path/logcat.txt"
-  adb shell screencap -p /sdcard/qualification-failure.png
-  adb pull /sdcard/qualification-failure.png "$evidence_path/" || true
-  adb pull /sdcard/Android/data/id.tege.video/files/qualification/. "$evidence_path/" || true
+  timeout 15s adb logcat -d -v threadtime > "$evidence_path/logcat.txt" || true
+  timeout 15s adb shell screencap -p /sdcard/qualification-failure.png || true
+  timeout 15s adb pull /sdcard/qualification-failure.png "$evidence_path/" || true
+  timeout 15s adb pull /sdcard/Android/data/id.tege.video/files/qualification/. "$evidence_path/" || true
   exit 1
 }
 adb pull /sdcard/Android/data/id.tege.video/files/qualification/. "$evidence_path/"

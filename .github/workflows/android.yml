@@ -12,6 +12,9 @@ jobs:
   qualify:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      QEMU_AUDIO_DRV: alsa
+      ALSA_CONFIG_PATH: ${{ github.workspace }}/tools/asound.conf
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -34,7 +37,7 @@ jobs:
       - name: Prepare encoded-video and virtual-microphone inspection
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+          sudo apt-get install -y -qq ffmpeg libasound2-dev
           python3 -m venv /tmp/cherry-grpc-venv
           /tmp/cherry-grpc-venv/bin/pip install --quiet grpcio-tools
       - name: Device tests, real GLES and camera-emulator recording
@@ -47,7 +50,7 @@ jobs:
           profile: pixel_5
           disable-animations: true
           emulator-boot-timeout: 180
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front emulated -memory 3072 -cores 4 -grpc 8554
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back emulated -camera-front emulated -memory 3072 -cores 4 -grpc 8554
           script: bash tools/device-tests.sh build/device-evidence/api35
       - name: Android 16 regression tests
         timeout-minutes: 8
@@ -59,7 +62,7 @@ jobs:
           profile: pixel_5
           disable-animations: true
           emulator-boot-timeout: 180
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front emulated -memory 3072 -cores 4 -grpc 8554
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back emulated -camera-front emulated -memory 3072 -cores 4 -grpc 8554
           script: bash tools/device-tests.sh build/device-evidence/api36
       - name: Independently inspect encoded videos
         run: |
