@@ -37,7 +37,7 @@ This is a small new Android application with two audited source adaptations, not
 
 Camera2 `TEMPLATE_RECORD` -> `SurfaceTexture` OES -> GLES 3 shader -> preview EGL surface and MediaRecorder input EGL surface -> AVC/HEVC + optional AAC -> temporary app-private MP4 -> MediaExtractor validation -> MediaStore `Movies/TeGeVideo`.
 
-LUT uploaded once as RGB16F 3D texture. No per-frame CPU bitmap copy. The same grade shader serves both destinations, with an explicit original-color bypass for monitor-only mode. Strength blends source and graded SDR RGB. LUT input must correspond to SDR/Rec.709; importing a camera LOG conversion does not create a LOG recording profile. Supported cube sizes 2..33, 4 MiB byte bound, exact entry count, finite numbers, defined domain and strict UTF-8. 1D/shaper/65³ rejected. Headers from other cube dialects may be rejected rather than guessed.
+LUT uploaded once as an RGBA16F 2D atlas of blue slices (maximum 33 x 1089). Bilinear sampling inside each slice plus explicit blue interpolation implements trilinear sampling. This replaces the original 3D texture path after GPU corner/highlight tests exposed black blue slices on the emulator. No per-frame CPU bitmap copy. The same grade shader serves both destinations, with an explicit original-color bypass for monitor-only mode. Strength blends source and graded SDR RGB. LUT input must correspond to SDR/Rec.709; importing a camera LOG conversion does not create a LOG recording profile. Supported cube sizes 2..33, 4 MiB byte bound, exact entry count, finite numbers, defined domain and strict UTF-8. 1D/shaper/65³ rejected. Headers from other cube dialects may be rejected rather than guessed.
 
 ## Device evidence provided by user
 

@@ -108,22 +108,24 @@ class VideoRenderer(
     }
     private fun uploadCube(size: Int, values: FloatArray) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,lutTexture)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_LINEAR)
-        for(axis in intArrayOf(GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_TEXTURE_WRAP_R))
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,axis,GLES30.GL_CLAMP_TO_EDGE)
-        // RGBA storage avoids driver-specific three-component half-float texture layouts.
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,lutTexture)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_LINEAR)
+        for(axis in intArrayOf(GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_TEXTURE_WRAP_T))
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,axis,GLES30.GL_CLAMP_TO_EDGE)
+        // Stack blue slices vertically. The largest supported atlas is only 33 x 1089.
+        // Bilinear sampling within each slice plus explicit blue interpolation matches
+        // CubeLut.sample, without relying on the emulator/driver's 3D texture path.
         val rgba=FloatArray(size*size*size*4)
         for(i in 0 until size*size*size) {
             rgba[i*4]=values[i*3];rgba[i*4+1]=values[i*3+1];rgba[i*4+2]=values[i*3+2];rgba[i*4+3]=1f
         }
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT,1)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_BASE_LEVEL,0)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_MAX_LEVEL,0)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_BASE_LEVEL,0)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAX_LEVEL,0)
         val buffer=ByteBuffer.allocateDirect(rgba.size*4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(rgba)
         buffer.position(0)
-        GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D,0,GLES30.GL_RGBA16F,size,size,size,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,buffer)
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA16F,size,size*size,0,GLES30.GL_RGBA,GLES30.GL_FLOAT,buffer)
         checkGl()
     }
     fun resize(w: Int,h: Int,degrees: Int,front: Boolean) { sync { width=w.coerceAtLeast(1);height=h.coerceAtLeast(1);rotation=degrees;mirrored=front } }
@@ -193,7 +195,7 @@ class VideoRenderer(
         GLES30.glUniformMatrix4fv(loc("uTex"),1,false,sample,0)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0); GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,oes)
         GLES30.glUniform1i(loc("uCamera"),0)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE1); GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,lutTexture)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,lutTexture)
         GLES30.glUniform1i(loc("uLut"),1)
         val active=isPreview || bake
         GLES30.glUniform1f(loc("uStrength"),if(active) strength else 0f)
@@ -255,14 +257,21 @@ class VideoRenderer(
         private val FRAGMENT="""#version 300 es
             #extension GL_OES_EGL_image_external_essl3 : require
             precision highp float;
-            uniform samplerExternalOES uCamera; uniform highp sampler3D uLut;
+            uniform samplerExternalOES uCamera; uniform highp sampler2D uLut;
             uniform float uStrength; uniform float uSize;
             uniform int uUseLut; uniform int uLook; uniform vec3 uMin; uniform vec3 uMax;
             in vec2 vUv; out vec4 color;
             void main(){
                 vec3 src=texture(uCamera,vUv).rgb; vec3 outRgb=src;
                 if(uStrength<=0. || (uUseLut==0 && uLook==0)){color=vec4(src,1.);return;}
-                if(uUseLut==1){vec3 c=clamp((src-uMin)/(uMax-uMin),0.,1.);outRgb=texture(uLut,(c*(uSize-1.)+.5)/uSize).rgb;}
+                if(uUseLut==1){
+                    vec3 p=clamp((src-uMin)/(uMax-uMin),0.,1.)*(uSize-1.);
+                    float low=floor(p.b);float high=min(low+1.,uSize-1.);
+                    vec2 atlas=vec2(uSize,uSize*uSize);
+                    vec3 a=texture(uLut,(vec2(p.r,p.g+low*uSize)+.5)/atlas).rgb;
+                    vec3 b=texture(uLut,(vec2(p.r,p.g+high*uSize)+.5)/atlas).rgb;
+                    outRgb=mix(a,b,p.b-low);
+                }
                 else if(uLook==1){outRgb=pow(src,vec3(.98,1.01,1.04))*vec3(1.025,1.,.97);}
                 else if(uLook==2){float l=dot(src,vec3(.2126,.7152,.0722));outRgb=mix(vec3(l),src,.86)+vec3(-.012,.009,.015)*(1.-l);}
                 else if(uLook==3){outRgb=vec3(dot(src,vec3(.2126,.7152,.0722)));}

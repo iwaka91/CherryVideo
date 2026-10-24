@@ -124,13 +124,13 @@ class QualificationTest {
                     assertTrue(preview.getGlobalVisibleRect(a));assertTrue(dock.getGlobalVisibleRect(b))
                     assertTrue("LUT controls must sit below the visible preview",a.bottom<=b.top && a.height()>150)
                 }
-                UiDevice.getInstance(instrumentation).findObject(UiSelector().text("＋ Impor .cube")).click()
+                tap(activity,"import-lut")
                 await("Imported LUT was not persisted") { context.getSharedPreferences("tege",0).getString("lut",null)==CubeLut.parse(bytes).sha256 }
                 assertTrue(monitor.hits>=1)
                 screenshot("lut-import.png")
                 val old=context.getSharedPreferences("tege",0).getString("lut",null)
                 resolver.openOutputStream(uri,"w")!!.use { it.write("LUT_3D_SIZE 33\n0 0 0".toByteArray()) }
-                UiDevice.getInstance(instrumentation).findObject(UiSelector().text("＋ Impor .cube")).click()
+                tap(activity,"import-lut")
                 await("Malformed LUT did not show an import error") {
                     var shown=false
                     instrumentation.runOnMainSync { shown=activity.window.decorView.findViewWithTag<android.widget.TextView>("status").text.toString().startsWith("Impor LUT ditolak") }
@@ -161,13 +161,17 @@ class QualificationTest {
         val lut=CubeLut.parse(cubeSwap())
         try {
             renderer.resize(320,240,0,false);renderer.grade(lut,1f,true,0)
+            val results=org.json.JSONArray();val errors=mutableListOf<String>()
             for(color in listOf(Color.RED,Color.GREEN,Color.BLUE,Color.CYAN,Color.MAGENTA,Color.YELLOW,Color.WHITE,Color.BLACK,Color.GRAY)) {
                 val canvas=renderer.input.lockCanvas(null);canvas.drawColor(color);renderer.input.unlockCanvasAndPost(canvas)
                 Thread.sleep(200)
                 val expected=lut.sample(Color.red(color)/255f,Color.green(color)/255f,Color.blue(color)/255f)
                 val actual=renderer.centerPixel()
-                for(c in 0..2) assertEquals("Input ${Integer.toHexString(color)} channel $c GPU ${actual.toList()}",expected[c]*255,actual[c].toFloat(),20f)
+                results.put(org.json.JSONObject().put("input",Integer.toHexString(color)).put("actual",org.json.JSONArray(actual.toList())).put("expected",org.json.JSONArray(expected.map { it*255 })))
+                for(c in 0..2) if(kotlin.math.abs(expected[c]*255-actual[c])>20f) errors.add("Input ${Integer.toHexString(color)} channel $c GPU ${actual.toList()}")
             }
+            File(evidence,"lut-gpu-colors.json").writeText(results.toString(2))
+            assertTrue(errors.joinToString("; "),errors.isEmpty())
             assertNull(failure)
         } finally { renderer.close();reader.close() }
     }
