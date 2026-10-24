@@ -1,21 +1,11 @@
-Cherry Video 0.2.0 beta — update after Xiaomi 13T bug reports.
+Cherry Video 0.2.1 beta — recording startup synchronization hotfix.
 
-INSTALLATION LIMITATION: The configured CI keystore-cache path did not exist, so the old signing key is not available in retained build artifacts. This APK cannot be installed over 0.1.1. A clean install requires removing the old app and deletes its private preferences and imported LUT copies. Back up recordings, original .cube files and important settings before deliberately choosing that option. No application or phone data was removed by this update work. A permanent signing identity still needs to be configured for future in-place updates.
+- Feed surface video and PCM/AAC timestamps relative to one MONOTONIC epoch before encoding. Gate stale preview frames before they enter the video encoder; never discard the initial encoded keyframe merely because it predates a start-call timestamp.
+- Anchor PCM to AudioRecord TIMEBASE_MONOTONIC capture timestamps when available. Fall back to the first blocking PCM read completion, accounting for captured sample count, rather than the time startRecording returned.
+- Buffer startup packets until audio and a decodable video keyframe overlap. Trim pre-roll using one shared offset for both tracks; do not independently reset audio/video to zero. Preserve the existing A/V start/end and container-duration validators, including rejection of the 15,070-second clock regression.
+- Add regression tests for delayed video, delayed microphone, AAC priming, codec output order, no-audio recording, and playable delayed-start AVC/HEVC files when an encoder is available.
+- Include actual start timestamps in validation errors and retain last-recording-attempt.json (also included in diagnostic export) even when publication fails. Existing pending recordings are not deleted or automatically rewritten.
 
-Verified APK SHA-256: 7cb17e070a0e55810720acdf4d44e6529d6a5938a7d1cbe20292c358fc7fdf59.
+Scope: startup/finalization bug only. No zoom, camera-lens selection or audio-input feature changes. Compile/lint/JVM tests, Android API 35/36 instrumentation, and independent ffprobe/decoded-frame inspection must pass before APK publication. Emulator results do not certify Xiaomi 13T microphone acoustics, latency, 4K/60 fps or device stability. The original failing Xiaomi file/log was not available; physical retesting is required.
 
-- Rename app to Cherry Video. Keep package id.tege.video. Signing verification found a different certificate from 0.1.1; in-place update is NOT supported. New recordings use Movies/CherryVideo; gallery includes the old folder.
-- Correct the Camera2 SurfaceTexture clock to MONOTONIC before feeding MediaRecorder. Never substitute per-frame arrival time or reset video to zero before MediaRecorder. Final validation rejects displaced video, A/V start/end mismatch and inflated container duration. Regression tests cover the reported 15,070-second offset.
-- Replace camera recording through MediaRecorder with explicit surface MediaCodec video, AudioRecord/AAC and MediaMuxer. Normalize both tracks against one MONOTONIC epoch. Preserve the encoder BufferQueue until both codecs drain to EOS; stop GL submissions, drain, then destroy the EGL encoder surface. Use a half-float 2D atlas with trilinear LUT sampling and verify primary colors, gray and highlights at 2³/17³/33³.
-- Remove producer sensor rotation/mirroring once before applying preview rotation. Encode sensor-oriented pixels with per-take orientation metadata. Quadrant GPU and matrix tests cover four rotations and mirroring.
-- Coalesce frame callbacks, latch latest buffers, cache shader uniforms, bypass unused color work and avoid an extra swap-vsync wait. Report preview submission rate, render duration and arrival gaps. These metrics do not measure physical photon-to-photon latency.
-- Offer regular 1080p60 where supported; otherwise expose a conditional HS (uji) path at an advertised fixed 120+ fps, sampling to real-time 60 fps. HS disables manual camera controls/OIS/EIS. Unknown minimum stream duration no longer automatically hides an otherwise supported <=30 fps profile. 4K remains capability-dependent.
-- Replace the large LUT modal with an inline dock beside/below preview, with current look/intensity. Main buttons show LUT, OFF/EIS/OIS and audio selection. About is concise, with source and full license on separate views. Diagnostics are readable and export structured capability, physical-camera and timing data.
-
-Distribution requires compile/lint, JVM tests, Android 15/API 35 and Android 16/API 36 emulator instrumentation, real GLES grading/motion/orientation checks, and independent decoded-frame/ffprobe A/V/duration checks. Failed checks suppress APK publication.
-
-Physical Xiaomi 13T verification is still required for upright/mirrored preview, latency, audio sync, 1080p30/60, 4K30, focus motor access, OIS/EIS, microphones and heat. Software emulator performance is not a passed 30/60 fps performance gate. No claim of cinematic image quality or Xiaomi stability certification is made.
-
-Audio qualification covers PCM delivery through Android AudioRecord, AAC encoding and A/V timing with an emulated null audio source. Physical microphone acoustics are NOT tested: the host PulseAudio backend was unavailable, and emulator 37.2.12 crashed on gRPC audio injection before app tests. Audio RMS is reported as evidence, not treated as physical-microphone quality certification.
-
-Personal debug-signed beta. SDR 8-bit, 3D .cube up to 33³/4 MB. No LOG/HDR/RAW, 1D/shaper/65³ LUT, Gyroflow, manual audio gain or headphone monitoring. Backgrounding finalizes the take.
+Personal debug-signed beta. Verify the signing certificate against the installed APK before assuming in-place update support. Do not uninstall or clear data while old pending recordings need to be retained. This hotfix does not recover previously failed takes.

@@ -49,7 +49,7 @@ object VideoFiles {
                     audioEnd=maxOf(audioEnd,time)
                     if(!extractor.advance()) break
                 }
-                check(audioStart>=0 && abs(videoStart-audioStart)<=500_000L) { "Awal audio/video tidak sinkron. Berkas sementara dipertahankan." }
+                check(audioStart>=0 && abs(videoStart-audioStart)<=500_000L) { "Awal audio/video tidak sinkron: video ${videoStart/1000} ms, audio ${audioStart/1000} ms. Berkas sementara dipertahankan." }
                 check(abs(videoEnd-audioEnd)<=1_000_000L) { "Durasi audio/video tidak sinkron: video ${videoEnd/1000} ms, audio ${audioEnd/1000} ms. Berkas sementara dipertahankan." }
             }
             val metadata=MediaMetadataRetriever()

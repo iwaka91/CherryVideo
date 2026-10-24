@@ -6,6 +6,9 @@ import android.media.*
 import android.os.Process
 import android.view.Surface
 import id.tege.video.core.VideoProfile
+import id.tege.video.core.AudioFrameClock
+import id.tege.video.core.RecordingStart
+import org.json.JSONObject
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -42,8 +45,16 @@ class SurfaceRecorder(
     @Volatile private var failure: Throwable?=null
     @Volatile private var peak=0
     @Volatile var capturedAudioFrames=0L; private set
-    private var epochUs=0L
-    private var audioStartUs=0L
+    var epochNs=0L; private set
+    @Volatile private var audioClockSource="none"
+    @Volatile private var firstAudioInputUs: Long?=null
+    private val startup=RecordingStart(audioSource!=0)
+    val timingReport: JSONObject get()=JSONObject()
+        .put("clock","MONOTONIC, shared relative epoch")
+        .put("audioClockSource",audioClockSource).put("firstAudioInputUs",firstAudioInputUs ?: JSONObject.NULL)
+        .put("firstVideoOutputUs",startup.firstVideoUs ?: JSONObject.NULL)
+        .put("firstAudioOutputUs",startup.firstAudioUs ?: JSONObject.NULL)
+        .put("startupTrimUs",startup.originUs ?: JSONObject.NULL)
     private var channels=2
     private var started=false
     private var stopped=false
@@ -58,6 +69,7 @@ class SurfaceRecorder(
                     setInteger(MediaFormat.KEY_BIT_RATE,profile.bitrate)
                     setInteger(MediaFormat.KEY_FRAME_RATE,profile.fps)
                     setInteger(MediaFormat.KEY_I_FRAME_INTERVAL,1)
+                    setInteger(MediaFormat.KEY_MAX_B_FRAMES,0)
                     setInteger(MediaFormat.KEY_COLOR_STANDARD,MediaFormat.COLOR_STANDARD_BT709)
                     setInteger(MediaFormat.KEY_COLOR_TRANSFER,MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
                     setInteger(MediaFormat.KEY_COLOR_RANGE,MediaFormat.COLOR_RANGE_LIMITED)
@@ -97,8 +109,8 @@ class SurfaceRecorder(
     fun start() {
         check(!started)
         video!!.start();audio?.start()
-        epochUs=System.nanoTime()/1000
-        microphone?.let { it.startRecording();check(it.recordingState==AudioRecord.RECORDSTATE_RECORDING);audioStartUs=System.nanoTime()/1000 }
+        epochNs=System.nanoTime()
+        microphone?.let { it.startRecording();check(it.recordingState==AudioRecord.RECORDSTATE_RECORDING) }
         started=true;draining=true;capturing=microphone!=null
         drainThread=Thread({ drain() },"Cherry-Muxer").apply { start() }
         if(capturing) audioThread=Thread({ captureAudio() },"Cherry-Audio").apply { start() }
@@ -111,7 +123,10 @@ class SurfaceRecorder(
         val codec=audio ?: return
         val input=microphone ?: return
         var frames=0L
-        var nextUs=audioStartUs
+        var nextUs=0L
+        val clock=AudioFrameClock()
+        val timestamp=AudioTimestamp()
+        var clockReady=false
         try {
             while(capturing) {
                 val index=codec.dequeueInputBuffer(10_000)
@@ -127,10 +142,27 @@ class SurfaceRecorder(
                 var amplitude=0
                 for(i in 0 until count-1 step 2) amplitude=max(amplitude,abs(buffer.getShort(i).toInt()))
                 peak=amplitude
-                // Sample-count timing is anchored to the microphone start on the same clock.
-                val pts=audioStartUs+frames*1_000_000/48_000
-                codec.queueInputBuffer(index,0,count,pts,0)
-                frames+=count/(channels*2);capturedAudioFrames=frames;nextUs=audioStartUs+frames*1_000_000/48_000
+                val frameCount=count/(channels*2)
+                if(!clockReady) {
+                    if(input.getTimestamp(timestamp,AudioTimestamp.TIMEBASE_MONOTONIC)==AudioRecord.SUCCESS && timestamp.nanoTime>0 && timestamp.framePosition>0) {
+                        clock.anchor(timestamp.framePosition,timestamp.nanoTime);audioClockSource="AudioRecord MONOTONIC"
+                    } else {
+                        // Older HALs may not supply a timestamp yet. Approximate the end of
+                        // the first blocking read, never the return time of startRecording().
+                        clock.anchor(frames+frameCount,System.nanoTime());audioClockSource="first PCM read completion"
+                    }
+                    clockReady=true
+                }
+                val pts=clock.timeUs(frames,epochNs)
+                if(firstAudioInputUs==null) firstAudioInputUs=pts
+                // Trim PCM preceding the shared epoch before AAC encoding, not by
+                // dropping arbitrary encoded video frames (which can lose the first IDR).
+                val skip=if(pts<0) minOf(frameCount,((-pts*48_000+999_999)/1_000_000).toInt()) else 0
+                val offset=skip*channels*2
+                val kept=count-offset
+                val queuedUs=clock.timeUs(frames+skip,epochNs).coerceAtLeast(0L)
+                codec.queueInputBuffer(index,offset,kept,queuedUs,0)
+                frames+=frameCount;capturedAudioFrames=frames;nextUs=clock.timeUs(frames,epochNs).coerceAtLeast(0L)
             }
             val deadline=System.nanoTime()+3_000_000_000L
             while(System.nanoTime()<deadline) {
@@ -151,10 +183,12 @@ class SurfaceRecorder(
         var writing=false
         var written=0L
         var limitSent=false
+        val sampleCounts=IntArray(codecs.size)
         fun write(packet: Packet) {
-            if(packet.pts<epochUs) return
-            val sample=MediaCodec.BufferInfo().apply { set(0,packet.bytes.size,packet.pts-epochUs,packet.flags) }
-            muxer!!.writeSampleData(packet.track,ByteBuffer.wrap(packet.bytes),sample)
+            val pts=startup.outputTimeUs(packet.pts) ?: return
+            val sample=MediaCodec.BufferInfo().apply { set(0,packet.bytes.size,pts,packet.flags) }
+            muxer!!.writeSampleData(tracks[packet.track],ByteBuffer.wrap(packet.bytes),sample)
+            sampleCounts[packet.track]++
             written+=packet.bytes.size
             if(written>=maxBytes && !limitSent) { limitSent=true;onLimit() }
         }
@@ -167,11 +201,7 @@ class SurfaceRecorder(
                         MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             check(tracks[i]<0) { "Format codec berubah saat merekam." }
                             tracks[i]=muxer!!.addTrack(codec.outputFormat);progressed=true
-                            if(tracks.all { it>=0 }) {
-                                muxer!!.start();writing=true
-                                while(pending.isNotEmpty()) write(pending.removeFirst())
-                                pendingBytes=0
-                            }
+                            if(tracks.all { it>=0 }) { muxer!!.start();writing=true }
                         }
                         in 0..Int.MAX_VALUE -> {
                             progressed=true
@@ -179,10 +209,15 @@ class SurfaceRecorder(
                                 if(info.size>0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG==0) {
                                     val data=checkNotNull(codec.getOutputBuffer(index)).apply { position(info.offset);limit(info.offset+info.size) }
                                     val bytes=ByteArray(info.size);data.get(bytes)
-                                    val packet=Packet(tracks[i],bytes,info.presentationTimeUs,info.flags)
-                                    if(writing) write(packet) else {
+                                    val packet=Packet(i,bytes,info.presentationTimeUs,info.flags)
+                                    startup.observe(i==0,packet.pts,packet.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME!=0)
+                                    if(writing && startup.originUs!=null) {
+                                        while(pending.isNotEmpty()) write(pending.removeFirst())
+                                        pendingBytes=0
+                                        write(packet)
+                                    } else {
                                         pending.addLast(packet);pendingBytes+=bytes.size
-                                        check(pendingBytes<32L*1024*1024) { "Format codec terlalu lama menunggu." }
+                                        check(pendingBytes<32L*1024*1024) { "Awal track rekaman terlalu lama menunggu: $timingReport" }
                                     }
                                 }
                                 if(info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM!=0) ended[i]=true
@@ -193,7 +228,9 @@ class SurfaceRecorder(
                 if(!progressed) Thread.yield()
             }
             check(ended.all { it }) { "Codec belum mengirim semua frame EOS." }
-            check(writing) { "Track rekaman belum siap." }
+            check(writing && startup.originUs!=null && sampleCounts[0]>=2 && (audio==null || sampleCounts[1]>0)) {
+                "Belum ada audio/video yang tumpang tindih pada keyframe valid: $timingReport"
+            }
         } catch(e: Throwable) { fail(e) }
         finally {
             if(writing) runCatching { muxer?.stop() }.onFailure { fail(it) }

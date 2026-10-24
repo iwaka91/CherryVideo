@@ -538,11 +538,13 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun showDiagnostics() {
         val last=File(filesDir,"last-recording.json").takeIf { it.exists() }?.readText()
+        val attempt=File(filesDir,"last-recording-attempt.json").takeIf { it.exists() }?.readText()
         exportJson=JSONObject().put("device","${Build.MANUFACTURER} ${Build.MODEL}").put("api",Build.VERSION.SDK_INT)
             .put("version",BuildConfig.VERSION_NAME).put("cameras",JSONArray(cameras.map { it.report() }))
             .put("physicalCameras",CameraCatalog.physicalReport(this,cameras)).put("preview",engine?.previewStats)
             .put("selectedCamera",cameras.getOrNull(cameraIndex)?.id).put("selectedProfile",selected.label).put("codec",if(hevc) "HEVC" else "AVC")
-            .put("lastRecording",last?.let { JSONObject(it) } ?: JSONObject.NULL).toString(2)
+            .put("lastRecording",last?.let { JSONObject(it) } ?: JSONObject.NULL)
+            .put("lastRecordingAttempt",attempt?.let { JSONObject(it) } ?: JSONObject.NULL).toString(2)
         val panel=body()
         val p=engine?.previewStats ?: JSONObject()
         panel.addView(text("${Build.MANUFACTURER} ${Build.MODEL}\nAndroid API ${Build.VERSION.SDK_INT} · ${BuildConfig.VERSION_NAME}",15f,gold))

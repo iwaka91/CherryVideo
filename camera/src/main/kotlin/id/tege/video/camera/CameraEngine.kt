@@ -221,7 +221,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             encoderSurface=rec.surface
             rec.start()
             recordingStartNs=System.nanoTime()
-            renderer!!.attachEncoder(encoderSurface!!)
+            renderer!!.attachEncoder(encoderSurface!!,rec.epochNs)
             isRecording=true;busy=false;ui { listener.onRecording(true) }
         } catch(e: Exception) {
             runCatching { renderer?.detachEncoder() };runCatching { recorder?.release() };recorder=null
@@ -237,6 +237,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         val stoppedAtNs=System.nanoTime()
         var submission=JSONObject()
         var stopped=false
+        var timing=JSONObject()
         try {
             // Destroying EGL first disconnects the producer and frees queued buffers.
             // Stop submitting, drain both codecs to EOS, then release the EGL window.
@@ -252,10 +253,15 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             recorder?.stop();stopped=true
         } catch(e: Exception) { error("Video belum dapat difinalisasi; berkas sementara dipertahankan: ${e.cause?.message ?: e.message}") }
         finally {
+            timing=recorder?.timingReport ?: JSONObject()
             runCatching { renderer?.detachEncoder() }
             runCatching { recorder?.release() };recorder=null;encoderSurface?.release();encoderSurface=null
         }
         val file=pending;pending=null
+        val attempt=JSONObject().put("name",name).put("codec",if(hevc) "HEVC" else "AVC")
+            .put("recorderTiming",timing).put("encoderSubmission",submission).put("finalized",stopped)
+        fun saveAttempt() { runCatching { File(context.filesDir,"last-recording-attempt.json").writeText(attempt.toString(2)) } }
+        saveAttempt()
         if(stopped && file!=null) {
             try {
                 val report=VideoFiles.inspect(file,profile,recordAudio,orientation)
@@ -264,10 +270,14 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                     .put("look",look).put("strength",intensity.toDouble()).put("baked",bake)
                     .put("audioSourceRequest",requestedAudio).put("lastSensorExposure",exposureInfo)
                     .put("captureFps",profile.captureFps).put("highSpeed",profile.highSpeed).put("preview",previewStats)
-                    .put("encoderSubmission",submission)
+                    .put("encoderSubmission",submission).put("recorderTiming",timing)
                 val saved=VideoFiles.publish(context,file,name,report)
+                attempt.put("published",true);saveAttempt()
                 lastSaved=saved;ui { listener.onSaved(saved) }
-            } catch(e: Exception) { error("Penyimpanan belum selesai. Berkas sementara dipertahankan: ${e.message}") }
+            } catch(e: Exception) {
+                attempt.put("published",false).put("error",e.message);saveAttempt()
+                error("Penyimpanan belum selesai. Berkas sementara dipertahankan: ${e.message}")
+            }
         } else if(file?.length()==0L) { file.delete() }
         busy=false;ui { listener.onRecording(false) }
     }

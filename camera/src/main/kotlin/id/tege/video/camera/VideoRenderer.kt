@@ -34,6 +34,7 @@ class VideoRenderer(
     private var window=EGL14.EGL_NO_SURFACE
     private var encoder=EGL14.EGL_NO_SURFACE
     private var encoding=false
+    private var encoderEpochNs=0L
     private var program=0
     private var oes=0
     private var lutTexture=0
@@ -139,10 +140,11 @@ class VideoRenderer(
         if(value?.sha256!=lut?.sha256) { if(value==null) uploadIdentity() else uploadCube(value.size,value.values) }
         lut=value;strength=intensity.coerceIn(0f,1f);bake=recordLut;look=builtIn
     } }
-    fun attachEncoder(surface: Surface) { sync {
+    fun attachEncoder(surface: Surface, epochNs: Long = 0L) { sync {
         check(encoder==EGL14.EGL_NO_SURFACE)
         encoder=EGL14.eglCreateWindowSurface(display,config,surface,intArrayOf(EGL14.EGL_NONE),0)
         check(encoder!=EGL14.EGL_NO_SURFACE) { "Encoder EGL surface unavailable" }
+        encoderEpochNs=epochNs
         encoderGate=FrameGate(outputFps);renderedFrames=0L;lastEncodedTimestampNs=0L;firstEncodedTimestampNs=0L;encoding=true
     } }
     /** Keep the BufferQueue connected until the recorder has drained its pending frames. */
@@ -172,9 +174,10 @@ class VideoRenderer(
                 check(EGL14.eglSwapBuffers(display,window)) { "Preview swap failed" };previewDrawn=true
                 if(!previewReady) { previewReady=true;onPreviewReady() }
             }
-            if(encoding && encoder!=EGL14.EGL_NO_SURFACE && encoderGate.accept(stamp)) {
+            val monotonicStamp=frameClock.monotonic(stamp)
+            if(encoding && encoder!=EGL14.EGL_NO_SURFACE && monotonicStamp>=encoderEpochNs && encoderGate.accept(stamp)) {
                 draw(encoder,sourceWidth,sourceHeight,false)
-                check(EGLExt.eglPresentationTimeANDROID(display,encoder,frameClock.monotonic(stamp))) { "Encoder timestamp failed" }
+                check(EGLExt.eglPresentationTimeANDROID(display,encoder,monotonicStamp-encoderEpochNs)) { "Encoder timestamp failed" }
                 check(EGL14.eglSwapBuffers(display,encoder)) { "Encoder swap failed" }
                 renderedFrames++;lastEncodedTimestampNs=frameClock.monotonic(stamp)
                 if(firstEncodedTimestampNs==0L) firstEncodedTimestampNs=lastEncodedTimestampNs

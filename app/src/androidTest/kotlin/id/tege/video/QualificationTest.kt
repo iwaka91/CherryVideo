@@ -155,6 +155,50 @@ class QualificationTest {
     }.toByteArray()
     @Test fun gpuLutBakesIntoEncodedMp4() { verifyGpu(baked=true) }
     @Test fun monitorOnlyLutKeepsOriginalEncodedColor() { verifyGpu(baked=false) }
+    @Test fun delayedVideoStartupStillProducesPlayableSynchronizedFiles() {
+        val available=android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos
+        for(hevc in listOf(false,true)) {
+            val mime=if(hevc) "video/hevc" else "video/avc"
+            if(available.none { it.isEncoder && it.supportedTypes.contains(mime) }) continue
+            for(audio in listOf(0,1)) {
+                val reader=ImageReader.newInstance(320,240,PixelFormat.RGBA_8888,4)
+                reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))
+                var failure: String?=null
+                val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
+                val file=File(evidence,"startup-${if(hevc) "hevc" else "avc"}-${if(audio==0) "silent" else "audio"}.mp4")
+                val recorder=SurfaceRecorder(context,file,VideoProfile(320,240,30),hevc,audio,0,100L*1024*1024,
+                    onLimit={ failure="Unexpected test file limit" },onFailure={ failure=it })
+                try {
+                    renderer.resize(320,240,0,false)
+                    recorder.prepare();recorder.start()
+                    // Reproduce >500 ms audio/video startup skew, not a relaxed validator.
+                    Thread.sleep(900)
+                    renderer.attachEncoder(recorder.surface,recorder.epochNs)
+                    repeat(55) { index ->
+                        val canvas=renderer.input.lockCanvas(null)
+                        canvas.drawColor(if(index<27) Color.RED else Color.BLUE)
+                        renderer.input.unlockCanvasAndPost(canvas)
+                        Thread.sleep(34)
+                    }
+                    renderer.pauseEncoder();recorder.stop();renderer.detachEncoder()
+                    assertNull(failure)
+                    val report=VideoFiles.inspect(file,VideoProfile(320,240,30),audio!=0,0)
+                        .put("recorderTiming",recorder.timingReport)
+                    assertTrue("Startup must be trimmed, not published as a leading gap",report.getLong("videoStartUs")<100_000L)
+                    assertTrue(report.getInt("frames")>=12)
+                    assertTrue(recorder.timingReport.getLong("startupTrimUs")>=500_000L)
+                    if(audio!=0) assertTrue(kotlin.math.abs(report.getLong("audioStartUs")-report.getLong("videoStartUs"))<150_000L)
+                    File(evidence,file.nameWithoutExtension+".json").writeText(report.toString(2))
+                    val metadata=MediaMetadataRetriever()
+                    try {
+                        metadata.setDataSource(file.absolutePath)
+                        val bitmap=metadata.getFrameAtTime(300_000,MediaMetadataRetriever.OPTION_CLOSEST)
+                        assertNotNull("Finalized MP4 must decode",bitmap);bitmap?.recycle()
+                    } finally { metadata.release() }
+                } finally { recorder.release();renderer.close();reader.close() }
+            }
+        }
+    }
     @Test fun gpuLutCornersAndHighlightsMatchCpuReference() {
         val reader=ImageReader.newInstance(320,240,PixelFormat.RGBA_8888,4)
         reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))
@@ -285,7 +329,7 @@ class QualificationTest {
                 recorder.setVideoSize(320,240);recorder.setVideoFrameRate(30);recorder.setVideoEncodingBitRate(2_000_000)
                 recorder.setOutputFile(file.absolutePath);recorder.prepare();recorder.start();recorder.surface
             }
-            renderer.attachEncoder(surface)
+            renderer.attachEncoder(surface,direct?.epochNs ?: 0L)
             repeat(70) { index ->
                 val canvas=renderer.input.lockCanvas(null);canvas.drawColor(Color.RED)
                 val paint=android.graphics.Paint().apply { color=Color.WHITE }
