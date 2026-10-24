@@ -56,7 +56,10 @@ class AudioRoute(private val context: Context,private val external: Boolean,devi
         }
     }
     fun apply(record: AudioRecord) {
-        selected?.let { check(record.setPreferredDevice(it)) { "Android menolak input ${AudioInputs.name(it)}." } }
+        selected?.let {
+            val accepted=record.setPreferredDevice(it)
+            check(!external || accepted) { "Android menolak input ${AudioInputs.name(it)}." }
+        }
     }
     fun verify(actual: AudioDeviceInfo?) {
         check(!external || (actual!=null && actual.id==selected?.id)) {
