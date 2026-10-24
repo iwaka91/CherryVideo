@@ -41,6 +41,7 @@ class SurfaceRecorder(
     @Volatile private var capturing=false
     @Volatile private var failure: Throwable?=null
     @Volatile private var peak=0
+    @Volatile var capturedAudioFrames=0L; private set
     private var epochUs=0L
     private var audioStartUs=0L
     private var channels=2
@@ -129,7 +130,7 @@ class SurfaceRecorder(
                 // Sample-count timing is anchored to the microphone start on the same clock.
                 val pts=audioStartUs+frames*1_000_000/48_000
                 codec.queueInputBuffer(index,0,count,pts,0)
-                frames+=count/(channels*2);nextUs=audioStartUs+frames*1_000_000/48_000
+                frames+=count/(channels*2);capturedAudioFrames=frames;nextUs=audioStartUs+frames*1_000_000/48_000
             }
             val deadline=System.nanoTime()+3_000_000_000L
             while(System.nanoTime()<deadline) {

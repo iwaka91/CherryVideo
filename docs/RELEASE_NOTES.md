@@ -12,4 +12,6 @@ Distribution requires compile/lint, JVM tests, Android 15/API 35 and Android 16/
 
 Physical Xiaomi 13T verification is still required for upright/mirrored preview, latency, audio sync, 1080p30/60, 4K30, focus motor access, OIS/EIS, microphones and heat. Software emulator performance is not a passed 30/60 fps performance gate. No claim of cinematic image quality or Xiaomi stability certification is made.
 
+Audio qualification covers PCM delivery through Android AudioRecord, AAC encoding and A/V timing with an emulated null audio source. Physical microphone acoustics are NOT tested: the host PulseAudio backend was unavailable, and emulator 37.2.12 crashed on gRPC audio injection before app tests. Audio RMS is reported as evidence, not treated as physical-microphone quality certification.
+
 Personal debug-signed beta. SDR 8-bit, 3D .cube up to 33³/4 MB. No LOG/HDR/RAW, 1D/shaper/65³ LUT, Gyroflow, manual audio gain or headphone monitoring. Backgrounding finalizes the take.

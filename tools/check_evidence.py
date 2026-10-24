@@ -61,13 +61,13 @@ def inspect(video):
         samples = array.array("f", subprocess.check_output([
             "ffmpeg", "-v", "error", "-i", str(video), "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "f32le", "-"]))
         audio_rms = math.sqrt(sum(x*x for x in samples)/len(samples))
-        assert audio_rms > .001, f"Virtual reference microphone was not recorded: {video}"
     return {"file": str(video), "width": stream["width"], "height": stream["height"],
             "frames": len(times), "actual_fps": (len(times)-1)/(times[-1]-times[0]),
             "first_video_pts": times[0], "container_duration": duration,
             "max_gap_ms": 1000*max(b-a for a,b in zip(times,times[1:])),
             "max_pixel_change": max(differences),
             "audio_rms": audio_rms,
+            "audio_quality_scope": "Emulated PCM/AAC/timing only; no physical microphone acoustics certification",
             "scope": "Emulator functional evidence; no Xiaomi performance claim"}
 
 

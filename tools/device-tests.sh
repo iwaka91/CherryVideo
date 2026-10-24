@@ -15,11 +15,7 @@ if [[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" == "1" ]]; then
   adb shell settings put global heads_up_notifications_enabled 0
   adb shell wm size 480x854
   adb shell wm density 160
-  adb emu avd hostmicoff
-  mkdir -p build/grpc-python
-  /tmp/cherry-grpc-venv/bin/python tools/inject_audio.py "$ANDROID_HOME/emulator/lib" build/grpc-python > "$evidence_path/grpc-audio.txt" 2>&1 &
-  injection_pid=$!
-  trap 'kill "$injection_pid" 2>/dev/null || true' EXIT
+  adb emu avd hostmicon
 fi
 bash gradlew --no-daemon :app:connectedDebugAndroidTest || {
   timeout 15s adb logcat -d -v threadtime > "$evidence_path/logcat.txt" || true

@@ -73,6 +73,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     var hevc=false; private set
     val previewStats: JSONObject get() = renderer?.stats ?: JSONObject()
     val lastEncodedTimestampNs: Long get() = renderer?.lastEncodedTimestampNs ?: 0L
+    val capturedAudioFrames: Long get() = recorder?.capturedAudioFrames ?: 0L
     private fun ui(block: ()->Unit) { main.post(block) }
     private fun error(message: String) { lastError=message;Log.e("TeGeVideo",message);ui { listener.onError(message) } }
     @SuppressLint("MissingPermission")
@@ -245,6 +246,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                     .put("timestampSpanMs",(r.lastEncodedTimestampNs-r.firstEncodedTimestampNs)/1_000_000.0)
                     .put("lastFrameAgeMs",(stoppedAtNs-r.lastEncodedTimestampNs)/1_000_000.0)
                     .put("recordingClockSpanMs",(stoppedAtNs-recordingStartNs)/1_000_000.0)
+                    .put("capturedAudioFrames",recorder?.capturedAudioFrames ?: 0L)
                 Log.i("CherryVideo","Encoder submission: $submission")
             }
             recorder?.stop();stopped=true
