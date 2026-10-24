@@ -292,7 +292,7 @@ class QualificationTest {
             assertTrue("Preview LUT must turn red into green: ${pixel.toList()}",pixel[1]>180 && pixel[0]<60)
             val highlight=renderer.previewPixel(.84f,.86f)
             assertTrue("White highlight must remain white: ${highlight.toList()}",highlight.take(3).all { it>180 })
-            renderer.detachEncoder();recorder.stop();surface.release()
+            renderer.pauseEncoder();recorder.stop();renderer.detachEncoder();surface.release()
             val report=VideoFiles.inspect(file,VideoProfile(320,240,30),false)
             assertTrue(report.getInt("frames")>=20)
             File(evidence,file.nameWithoutExtension+".json").writeText(report.toString(2))

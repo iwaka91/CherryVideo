@@ -248,10 +248,13 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         busy=true;isRecording=false;focus.cancel()
         var stopped=false
         try {
-            runCatching { renderer?.detachEncoder() }.onFailure { Log.w("TeGeVideo","Preview already released while finalizing",it) }
+            // Destroying EGL first disconnects the producer and frees queued buffers.
+            // Stop submitting, drain MediaRecorder, then release the EGL window.
+            runCatching { renderer?.pauseEncoder() }.onFailure { Log.w("TeGeVideo","Could not finish pending GPU work",it) }
             recorder?.stop();stopped=true
         } catch(e: Exception) { error("Video belum dapat difinalisasi: ${e.cause?.message ?: e.message}") }
         finally {
+            runCatching { renderer?.detachEncoder() }
             runCatching { recorder?.release() };recorder=null;encoderSurface?.release();encoderSurface=null
         }
         val file=pending;pending=null
