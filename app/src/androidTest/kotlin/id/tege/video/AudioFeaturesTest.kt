@@ -64,7 +64,7 @@ class AudioFeaturesTest {
             assertThrows(IllegalStateException::class.java) { route.prepare() }
         }
     }
-    @Test fun audioPresetUiPersistsAndCameraReportsAppliedZoom() {
+    @Test fun audioPresetUiPersists() {
         context.getSharedPreferences("tege",0).edit().clear().commit()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             lateinit var activity: MainActivity;scenario.onActivity { activity=it }
@@ -75,18 +75,12 @@ class AudioFeaturesTest {
             }
             await("Camera unavailable") { activity.engine?.isReady==true }
             scenario.onActivity { it.window.decorView.findViewWithTag<Button>("audio").performClick() }
+            UiDevice.getInstance(instrumentation)
             UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text("Suara Jernih"))
             assertTrue(UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Suara Jernih")).click())
-            UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Selesai")).click()
+            UiDevice.getInstance(instrumentation).findObject(UiSelector().resourceId("android:id/button2")).click()
             scenario.onActivity { assertTrue(it.window.decorView.findViewWithTag<Button>("audio").text.contains("Suara Jernih")) }
             assertEquals(1,context.getSharedPreferences("tege",0).getInt("audioMode",-1))
-            val entry=activity.engine!!.entry
-            if(entry.zoomMax>1.1f) {
-                val target=min(2f,entry.zoomMax)
-                activity.engine!!.update(Controls(zoom=target))
-                await("Camera must report a zoomed capture result") { activity.engine?.reportedZoom?.let { abs(it-target)<.1f }==true }
-                activity.engine!!.update(Controls(zoom=1f))
-            } else scenario.onActivity { assertFalse(it.window.decorView.findViewWithTag<Button>("zoom").isEnabled) }
             val bmp=instrumentation.uiAutomation.takeScreenshot()
             bmp?.let { image ->
                 val directory=File(context.getExternalFilesDir(null),"qualification").apply { mkdirs() }
@@ -95,4 +89,24 @@ class AudioFeaturesTest {
             }
         }
     }
+    @Test fun cameraReportsAppliedZoom() {
+        context.getSharedPreferences("tege",0).edit().clear().commit()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var activity: MainActivity;scenario.onActivity { activity=it }
+            fun await(message: String,predicate: ()->Boolean) {
+                val end=System.currentTimeMillis()+25000
+                while(System.currentTimeMillis()<end) { if(predicate()) return;Thread.sleep(100) }
+                fail(message)
+            }
+            await("Camera unavailable") { activity.engine?.isReady==true }
+            val entry=activity.engine!!.entry
+            if(entry.zoomMax>1.1f) {
+                val target=min(2f,entry.zoomMax)
+                activity.engine!!.update(Controls(zoom=target))
+                await("Camera must report a zoomed capture result") { activity.engine?.reportedZoom?.let { abs(it-target)<.1f }==true }
+                activity.engine!!.update(Controls(zoom=1f))
+            } else scenario.onActivity { assertFalse(it.window.decorView.findViewWithTag<Button>("zoom").isEnabled) }
+        }
+    }
+
 }
