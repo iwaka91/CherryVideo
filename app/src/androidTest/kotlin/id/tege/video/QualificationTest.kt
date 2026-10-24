@@ -26,6 +26,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiSelector
+import androidx.test.uiautomator.UiScrollable
 import id.tege.video.camera.VideoFiles
 import id.tege.video.camera.VideoRenderer
 import id.tege.video.camera.TextureGeometry
@@ -101,7 +102,9 @@ class QualificationTest {
                 assertTrue("Landscape record button must remain fully visible",button.getGlobalVisibleRect(bounds) && bounds.height()==button.height)
             }
             screenshot("pro-landscape.png")
-            tap(activity,"audio");tap(activity,"audio-mode-2")
+            tap(activity,"audio")
+            UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text("Reduksi Kuat"))
+            assertTrue(UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Reduksi Kuat")).click())
             UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Selesai")).click()
             tap(activity,"record")
             await("Landscape recorder did not start") { activity.engine?.isRecording==true }

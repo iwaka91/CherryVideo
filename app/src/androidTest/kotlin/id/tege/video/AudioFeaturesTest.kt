@@ -9,6 +9,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiSelector
+import androidx.test.uiautomator.UiScrollable
 import id.tege.video.camera.*
 import id.tege.video.core.AudioMode
 import org.junit.Assert.*
@@ -74,7 +75,8 @@ class AudioFeaturesTest {
             }
             await("Camera unavailable") { activity.engine?.isReady==true }
             scenario.onActivity { it.window.decorView.findViewWithTag<Button>("audio").performClick() }
-            scenario.onActivity { it.window.decorView.findViewWithTag<RadioButton>("audio-mode-1").performClick() }
+            UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text("Suara Jernih"))
+            assertTrue(UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Suara Jernih")).click())
             UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Selesai")).click()
             scenario.onActivity { assertTrue(it.window.decorView.findViewWithTag<Button>("audio").text.contains("Suara Jernih")) }
             assertEquals(1,context.getSharedPreferences("tege",0).getInt("audioMode",-1))
