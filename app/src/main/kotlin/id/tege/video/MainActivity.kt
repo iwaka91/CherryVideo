@@ -160,18 +160,22 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val gallery=button("Galeri","gallery") { showGallery() }
         panel.addView(row(lens,quality));panel.addView(row(colors,stable));panel.addView(proRow)
         panel.addView(row(audioButton,settings))
-        panel.addView(LinearLayout(this).apply {
+        val recordRow=LinearLayout(this).apply {
             gravity=Gravity.CENTER_VERTICAL;addView(gallery,LinearLayout.LayoutParams(dp(74),dp(52)).apply { setMargins(dp(3),dp(6),dp(6),dp(6)) })
             addView(record,LinearLayout.LayoutParams(0,dp(60),1f).apply { setMargins(dp(3),dp(6),dp(3),dp(6)) })
-        })
+        }
         if(landscape) {
             root.addView(frame,LinearLayout.LayoutParams(0,-1,1f))
-            val sidebar=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;addView(header);addView(status);addView(detail);addView(panel) }
-            root.addView(ScrollView(this).apply { isFillViewport=true;addView(sidebar) },LinearLayout.LayoutParams(dp(254),-1))
+            val sidebar=LinearLayout(this).apply {
+                orientation=LinearLayout.VERTICAL;addView(header);addView(status);addView(detail)
+                addView(ScrollView(this@MainActivity).apply { addView(panel) },LinearLayout.LayoutParams(-1,0,1f))
+                addView(recordRow)
+            }
+            root.addView(sidebar,LinearLayout.LayoutParams(dp(254),-1))
         } else {
             root.addView(header);root.addView(status);root.addView(detail)
             root.addView(frame,LinearLayout.LayoutParams(-1,0,1f))
-            root.addView(panel)
+            root.addView(panel);root.addView(recordRow)
         }
         setContentView(root);root.requestApplyInsets();rebuilding=false
     }

@@ -77,6 +77,11 @@ class QualificationTest {
             scenario.onActivity { it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
             Thread.sleep(1500)
             await("Landscape camera did not reopen") { activity.engine?.isReady==true }
+            scenario.onActivity {
+                val button=it.window.decorView.findViewWithTag<Button>("record")
+                val bounds=android.graphics.Rect()
+                assertTrue("Landscape record button must remain fully visible",button.getGlobalVisibleRect(bounds) && bounds.height()==button.height)
+            }
             screenshot("pro-landscape.png")
             tap(activity,"record")
             await("Landscape recorder did not start") { activity.engine?.isRecording==true }

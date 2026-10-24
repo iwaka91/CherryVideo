@@ -49,9 +49,9 @@ jobs:
       - name: Package only qualified APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/TeGe-Video-0.1.0-beta.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/TeGe-Video-0.1.1-beta.apk
           sha256sum dist/*.apk > dist/SHA256SUMS.txt
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/TeGe-Video-0.1.0-beta.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/TeGe-Video-0.1.1-beta.apk
       - name: Upload passing APK
         uses: actions/upload-artifact@v4
         with:
@@ -62,7 +62,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "test-${{ github.run_number }}" dist/* --prerelease --title "TeGe Video 0.1.0 beta · internal gates passed" --notes-file docs/RELEASE_NOTES.md
+          gh release create "test-${{ github.run_number }}" dist/* --prerelease --title "TeGe Video 0.1.1 beta · internal gates passed" --notes-file docs/RELEASE_NOTES.md
       - name: Upload evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4
