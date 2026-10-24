@@ -38,6 +38,7 @@ jobs:
           python3 -m venv /tmp/cherry-grpc-venv
           /tmp/cherry-grpc-venv/bin/pip install --quiet grpcio-tools
       - name: Device tests, real GLES and camera-emulator recording
+        timeout-minutes: 8
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -45,9 +46,11 @@ jobs:
           arch: x86_64
           profile: pixel_5
           disable-animations: true
+          emulator-boot-timeout: 180
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front emulated -memory 3072 -cores 4 -grpc 8554
           script: bash tools/device-tests.sh build/device-evidence/api35
       - name: Android 16 regression tests
+        timeout-minutes: 8
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -55,6 +58,7 @@ jobs:
           arch: x86_64
           profile: pixel_5
           disable-animations: true
+          emulator-boot-timeout: 180
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front emulated -memory 3072 -cores 4 -grpc 8554
           script: bash tools/device-tests.sh build/device-evidence/api36
       - name: Independently inspect encoded videos

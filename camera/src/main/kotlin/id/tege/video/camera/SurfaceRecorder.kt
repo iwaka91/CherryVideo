@@ -95,8 +95,8 @@ class SurfaceRecorder(
     }
     fun start() {
         check(!started)
-        epochUs=System.nanoTime()/1000
         video!!.start();audio?.start()
+        epochUs=System.nanoTime()/1000
         microphone?.let { it.startRecording();check(it.recordingState==AudioRecord.RECORDSTATE_RECORDING);audioStartUs=System.nanoTime()/1000 }
         started=true;draining=true;capturing=microphone!=null
         drainThread=Thread({ drain() },"Cherry-Muxer").apply { start() }

@@ -32,7 +32,7 @@ def main():
     controller = rpc.EmulatorControllerStub(channel)
     controller.setMicrophoneState(pb.MicrophoneState(realAudioEnabled=False), timeout=10)
     fmt = pb.AudioFormat(samplingRate=48000, channels=pb.AudioFormat.Mono,
-                         format=pb.AudioFormat.AUD_FMT_S16, mode=pb.AudioFormat.MODE_UNSPECIFIED)
+                         format=pb.AudioFormat.AUD_FMT_S16, mode=pb.AudioFormat.MODE_REAL_TIME)
     # 50 ms contains exactly 44 cycles, so repeating the packet remains continuous.
     pcm = array.array("h", (int(4096*math.sin(2*math.pi*880*n/48000)) for n in range(2400)))
     if sys.byteorder != "little":
@@ -42,6 +42,7 @@ def main():
     def packets():
         while True:
             yield pb.AudioPacket(format=fmt, timestamp=time.time_ns()//1000, audio=samples)
+            time.sleep(.05)
 
     future = controller.injectAudio.future(packets())
     print("gRPC virtual microphone: 48 kHz mono S16, continuous 880 Hz reference", flush=True)
