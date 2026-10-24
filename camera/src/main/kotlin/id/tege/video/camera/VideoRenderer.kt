@@ -59,6 +59,7 @@ class VideoRenderer(
     private val locations=HashMap<String,Int>()
     private var closed=false
     @Volatile var renderedFrames=0L; private set
+    @Volatile var lastEncodedTimestampNs=0L; private set
     private val uv=FloatArray(16)
     private val mvp=FloatArray(16)
     private val vertices=ByteBuffer.allocateDirect(4*4*4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
@@ -138,7 +139,7 @@ class VideoRenderer(
         check(encoder==EGL14.EGL_NO_SURFACE)
         encoder=EGL14.eglCreateWindowSurface(display,config,surface,intArrayOf(EGL14.EGL_NONE),0)
         check(encoder!=EGL14.EGL_NO_SURFACE) { "Encoder EGL surface unavailable" }
-        encoderGate=FrameGate(outputFps);renderedFrames=0L
+        encoderGate=FrameGate(outputFps);renderedFrames=0L;lastEncodedTimestampNs=0L
     } }
     fun detachEncoder() { sync {
         if(encoder!=EGL14.EGL_NO_SURFACE) {
@@ -164,7 +165,7 @@ class VideoRenderer(
                 draw(encoder,sourceWidth,sourceHeight,false)
                 check(EGLExt.eglPresentationTimeANDROID(display,encoder,frameClock.monotonic(stamp))) { "Encoder timestamp failed" }
                 check(EGL14.eglSwapBuffers(display,encoder)) { "Encoder swap failed" }
-                renderedFrames++
+                renderedFrames++;lastEncodedTimestampNs=frameClock.monotonic(stamp)
             }
             if(previewDrawn) {
                 if(statsStart==0L) statsStart=started
@@ -176,6 +177,7 @@ class VideoRenderer(
                         .put("averageRenderMs",statsRenderNs/1_000_000.0/statsFrames).put("maxArrivalGapMs",statsMaxGapNs/1_000_000.0)
                         .put("sensorRotation",sensorRotation).put("relativeRotation",rotation).put("mirroredPreview",mirrored)
                         .put("producerMatrix",org.json.JSONArray(uv.map { it.toDouble() }))
+                        .put("cameraTimestampAgeMs",(System.nanoTime()-frameClock.monotonic(stamp))/1_000_000.0)
                         .put("clock","MONOTONIC").put("scope","Frame submission timing; photon-to-photon latency not measured")
                     statsStart=started;statsFrames=1;statsRenderNs=0L;statsMaxGapNs=0L
                 }

@@ -74,6 +74,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     lateinit var profile: VideoProfile; private set
     var hevc=false; private set
     val previewStats: JSONObject get() = renderer?.stats ?: JSONObject()
+    val lastEncodedTimestampNs: Long get() = renderer?.lastEncodedTimestampNs ?: 0L
     private fun ui(block: ()->Unit) { main.post(block) }
     private fun error(message: String) { lastError=message;Log.e("TeGeVideo",message);ui { listener.onError(message) } }
     @SuppressLint("MissingPermission")

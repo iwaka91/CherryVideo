@@ -70,8 +70,14 @@ class QualificationTest {
             screenshot("pro-portrait.png")
             tap(activity,"record")
             await("Recorder did not start") { activity.engine?.isRecording==true }
-            Thread.sleep(3500)
             screenshot("recording.png")
+            // Screenshot capture can stall a software-rendered emulator. Measure a
+            // normal take after that diagnostic work, with a recent submitted frame.
+            Thread.sleep(3500)
+            await("Camera timestamp did not catch up after screenshot",10000) {
+                val stamp=activity.engine?.lastEncodedTimestampNs ?: 0L
+                stamp>0 && System.nanoTime()-stamp in 0L..250_000_000L
+            }
             tap(activity,"record")
             await("No finalized camera video: ${activity.engine?.lastError}") { activity.lastSaved!=null }
             val saved=activity.lastSaved!!
@@ -140,17 +146,11 @@ class QualificationTest {
             }
         } finally { instrumentation.removeMonitor(monitor);resolver.delete(uri,null,null) }
     }
-    private fun cubeSwap()="""TITLE "Red to green test"
-        |LUT_3D_SIZE 2
-        |0 0 0
-        |0 1 0
-        |1 0 0
-        |1 1 0
-        |0 0 1
-        |0 1 1
-        |1 0 1
-        |1 1 1
-        |""".trimMargin().toByteArray()
+    private fun cubeSwap(size: Int=2)=buildString {
+        append("TITLE \"Red to green test\"\nLUT_3D_SIZE $size\n")
+        for(b in 0 until size) for(g in 0 until size) for(r in 0 until size)
+            append("${g.toFloat()/(size-1)} ${r.toFloat()/(size-1)} ${b.toFloat()/(size-1)}\n")
+    }.toByteArray()
     @Test fun gpuLutBakesIntoEncodedMp4() { verifyGpu(baked=true) }
     @Test fun monitorOnlyLutKeepsOriginalEncodedColor() { verifyGpu(baked=false) }
     @Test fun gpuLutCornersAndHighlightsMatchCpuReference() {
@@ -158,17 +158,19 @@ class QualificationTest {
         reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))
         var failure: String?=null
         val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
-        val lut=CubeLut.parse(cubeSwap())
         try {
-            renderer.resize(320,240,0,false);renderer.grade(lut,1f,true,0)
+            renderer.resize(320,240,0,false)
             val results=org.json.JSONArray();val errors=mutableListOf<String>()
-            for(color in listOf(Color.RED,Color.GREEN,Color.BLUE,Color.CYAN,Color.MAGENTA,Color.YELLOW,Color.WHITE,Color.BLACK,Color.GRAY)) {
+            for(size in listOf(2,17,33)) {
+              val lut=CubeLut.parse(cubeSwap(size));renderer.grade(lut,1f,true,0)
+              for(color in listOf(Color.RED,Color.GREEN,Color.BLUE,Color.CYAN,Color.MAGENTA,Color.YELLOW,Color.WHITE,Color.BLACK,Color.GRAY,Color.rgb(36,73,166))) {
                 val canvas=renderer.input.lockCanvas(null);canvas.drawColor(color);renderer.input.unlockCanvasAndPost(canvas)
                 Thread.sleep(200)
                 val expected=lut.sample(Color.red(color)/255f,Color.green(color)/255f,Color.blue(color)/255f)
                 val actual=renderer.centerPixel()
-                results.put(org.json.JSONObject().put("input",Integer.toHexString(color)).put("actual",org.json.JSONArray(actual.toList())).put("expected",org.json.JSONArray(expected.map { it*255 })))
-                for(c in 0..2) if(kotlin.math.abs(expected[c]*255-actual[c])>20f) errors.add("Input ${Integer.toHexString(color)} channel $c GPU ${actual.toList()}")
+                results.put(org.json.JSONObject().put("size",size).put("input",Integer.toHexString(color)).put("actual",org.json.JSONArray(actual.toList())).put("expected",org.json.JSONArray(expected.map { it*255 })))
+                for(c in 0..2) if(kotlin.math.abs(expected[c]*255-actual[c])>20f) errors.add("Size $size input ${Integer.toHexString(color)} channel $c GPU ${actual.toList()}")
+              }
             }
             File(evidence,"lut-gpu-colors.json").writeText(results.toString(2))
             assertTrue(errors.joinToString("; "),errors.isEmpty())

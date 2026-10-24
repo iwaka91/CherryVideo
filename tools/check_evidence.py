@@ -49,7 +49,7 @@ def inspect(video):
     stream = timeline(times, info["streams"], duration)
     raw = subprocess.check_output([
         "ffmpeg", "-v", "error", "-i", str(video), "-map", "0:v:0", "-vf", "scale=64:36,format=gray",
-        "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+        "-fps_mode", "passthrough", "-enc_time_base", "-1", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
     pixels = [raw[i:i+2304] for i in range(0, len(raw), 2304)]
     assert len(pixels) >= 12 and all(len(p) == 2304 for p in pixels)
     differences = [sum(abs(a-b) for a,b in zip(pixels[0],p))/2304 for p in pixels[1:]]
