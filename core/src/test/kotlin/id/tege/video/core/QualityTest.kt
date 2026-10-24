@@ -57,6 +57,9 @@ class QualityTest {
         assertFalse(VideoCadence.inspect(vfr,60).steady)
     }
     @Test fun duplicateTimestampIsNotValidCadence() { assertFalse(VideoCadence.inspect(listOf(0L,0L,33_333),30).steady) }
+    @Test fun bFrameDecodeOrderDoesNotInvalidateCadence() {
+        assertTrue(VideoCadence.inspect(listOf(0L,66_666L,33_333L,99_999L,166_665L,133_332L),30).steady)
+    }
     @Test fun focusPullReachesMarkAndCancelsStaleTicks() {
         val s=FocusPullSession()
         val token=s.start(FocusPullPlan(0f,4f,1000,FocusPullEasing.EASE_IN_OUT),0)

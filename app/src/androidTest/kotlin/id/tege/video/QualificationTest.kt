@@ -111,7 +111,9 @@ class QualificationTest {
                 resolver.openOutputStream(uri,"w")!!.use { it.write("LUT_3D_SIZE 33\n0 0 0".toByteArray()) }
                 UiDevice.getInstance(instrumentation).findObject(UiSelector().text("＋ Impor LUT (.cube)")).click()
                 await("Malformed LUT did not show an import error") {
-                    activity.window.decorView.findViewWithTag<android.widget.TextView>("status").text.toString().startsWith("Impor LUT ditolak")
+                    var shown=false
+                    instrumentation.runOnMainSync { shown=activity.window.decorView.findViewWithTag<android.widget.TextView>("status").text.toString().startsWith("Impor LUT ditolak") }
+                    shown
                 }
                 assertEquals(old,context.getSharedPreferences("tege",0).getString("lut",null))
             }

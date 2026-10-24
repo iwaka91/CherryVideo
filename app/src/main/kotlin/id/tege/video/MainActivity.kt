@@ -62,6 +62,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var uiRecording=false
     private var rebuilding=false
     private var retiringEngines=0
+    private var stickyError: String?=null
     @Volatile var engine: CameraEngine?=null; private set
     @Volatile var lastSaved: SavedVideo?=null; private set
     private val thermalListener=PowerManager.OnThermalStatusChangedListener { value ->
@@ -199,7 +200,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         engine=null;retiringEngines++
         old.close { retiringEngines--;startCamera() }
     }
-    private fun restart() { record.isEnabled=false;retireEngine();main.post { startCamera() } }
+    private fun restart() { record.isEnabled=false;onStatus("Menyiapkan kamera…");retireEngine();main.post { startCamera() } }
     override fun surfaceCreated(holder: SurfaceHolder) { if(!rebuilding) startCamera() }
     override fun surfaceChanged(holder: SurfaceHolder,format: Int,width: Int,height: Int) { startCamera();engine?.resize(width,height,rotation()) }
     override fun surfaceDestroyed(holder: SurfaceHolder) { retireEngine() }
@@ -224,7 +225,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) audio=0
         startCamera()
     }
-    override fun onStatus(message: String) { if(!isDestroyed) status.text=message }
+    override fun onStatus(message: String) {
+        if(isDestroyed || (message.startsWith("Siap") && stickyError!=null)) return
+        stickyError=null;status.text=message
+    }
     override fun onReady(entry: CameraEntry) { if(resumed && !isDestroyed && engine?.isReady==true) record.isEnabled=true }
     override fun onRecording(active: Boolean) {
         uiRecording=active
@@ -242,7 +246,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val r=video.report
         onStatus(String.format(Locale.US,"Tersimpan · %.2f fps aktual%s",r.getDouble("actualFps"),if(r.getBoolean("steadyCadence")) "" else " · ritme frame tidak stabil"))
     }
-    override fun onError(message: String) { android.util.Log.e("TeGeVideo",message);onStatus(message);if(!isDestroyed) { record.isEnabled=engine?.isReady==true;Toast.makeText(this,message,Toast.LENGTH_LONG).show() } }
+    override fun onError(message: String) {
+        android.util.Log.e("TeGeVideo",message);stickyError=message
+        if(!isDestroyed) { status.text=message;record.isEnabled=engine?.isReady==true;Toast.makeText(this,message,Toast.LENGTH_LONG).show() }
+    }
     private fun locked(): Boolean {
         if(engine?.isRecording==true || engine?.busy==true) { Toast.makeText(this,"Selesaikan rekaman dahulu.",Toast.LENGTH_SHORT).show();return true };return false
     }
@@ -345,7 +352,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
                 } }.onFailure { e -> main.post { onError("Impor LUT ditolak: ${e.message}") } }
             }
         } else if(requestCode==101) {
-            io.execute { runCatching { checkNotNull(contentResolver.openOutputStream(uri,"w")).use { it.write(exportJson.toByteArray()) } }
+            io.execute { runCatching { checkNotNull(contentResolver.openOutputStream(uri,"wt")).use { it.write(exportJson.toByteArray()) } }
                 .onSuccess { main.post { onStatus("Laporan diagnostik diekspor.") } }.onFailure { e -> main.post { onError("Ekspor gagal: ${e.message}") } } }
         }
     }

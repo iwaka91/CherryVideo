@@ -21,9 +21,11 @@ object VideoCadence {
     fun inspect(timesUs: List<Long>, targetFps: Int): Cadence {
         require(targetFps > 0)
         if (timesUs.size < 2) return Cadence(timesUs.size, 0.0, 0.0, false)
-        val gaps = timesUs.zipWithNext { a, b -> b - a }
+        // B-frame streams may expose samples in decode order; cadence uses presentation order.
+        val presentation = timesUs.sorted()
+        val gaps = presentation.zipWithNext { a, b -> b - a }
         if (gaps.any { it <= 0L }) return Cadence(timesUs.size, 0.0, 0.0, false)
-        val fps = (timesUs.size - 1) * 1_000_000.0 / (timesUs.last() - timesUs.first())
+        val fps = (timesUs.size - 1) * 1_000_000.0 / (presentation.last() - presentation.first())
         val expected = 1_000_000.0 / targetFps
         return Cadence(timesUs.size, fps, gaps.max() / 1000.0,
             abs(fps - targetFps) / targetFps <= 0.05 && gaps.max() <= expected * 1.55)
