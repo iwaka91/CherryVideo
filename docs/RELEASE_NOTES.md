@@ -1,6 +1,10 @@
 Cherry Video 0.2.0 beta — update after Xiaomi 13T bug reports.
 
-- Rename app to Cherry Video. Keep package id.tege.video and existing preferences/signing identity for an in-place update. New recordings use Movies/CherryVideo; gallery includes the old folder.
+INSTALLATION LIMITATION: The configured CI keystore-cache path did not exist, so the old signing key is not available in retained build artifacts. This APK cannot be installed over 0.1.1. A clean install requires removing the old app and deletes its private preferences and imported LUT copies. Back up recordings, original .cube files and important settings before deliberately choosing that option. No application or phone data was removed by this update work. A permanent signing identity still needs to be configured for future in-place updates.
+
+Verified APK SHA-256: 7cb17e070a0e55810720acdf4d44e6529d6a5938a7d1cbe20292c358fc7fdf59.
+
+- Rename app to Cherry Video. Keep package id.tege.video. Signing verification found a different certificate from 0.1.1; in-place update is NOT supported. New recordings use Movies/CherryVideo; gallery includes the old folder.
 - Correct the Camera2 SurfaceTexture clock to MONOTONIC before feeding MediaRecorder. Never substitute per-frame arrival time or reset video to zero before MediaRecorder. Final validation rejects displaced video, A/V start/end mismatch and inflated container duration. Regression tests cover the reported 15,070-second offset.
 - Replace camera recording through MediaRecorder with explicit surface MediaCodec video, AudioRecord/AAC and MediaMuxer. Normalize both tracks against one MONOTONIC epoch. Preserve the encoder BufferQueue until both codecs drain to EOS; stop GL submissions, drain, then destroy the EGL encoder surface. Use a half-float 2D atlas with trilinear LUT sampling and verify primary colors, gray and highlights at 2³/17³/33³.
 - Remove producer sensor rotation/mirroring once before applying preview rotation. Encode sensor-oriented pixels with per-take orientation metadata. Quadrant GPU and matrix tests cover four rotations and mirroring.

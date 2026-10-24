@@ -25,7 +25,7 @@ bash gradlew :app:connectedDebugAndroidTest
 
 Workflow GitHub Actions menjalankan build, lint, tes JVM dan instrumentasi emulator API 35/36: UI, pemilih LUT, transform rotasi/mirror, render GLES, validasi warna dan gerakan pada MP4, serta rekam/stop kamera emulator. Timestamp awal, sinkronisasi A/V dan durasi kontainer wajib lolos; regresi offset 15.070 detik sengaja ditolak. Pemeriksaan terpisah memakai ffprobe dan frame hasil decode. APK dan prerelease hanya diterbitkan setelah gerbang internal lolos. Bukti tes tersedia di artifact workflow.
 
-APK adalah build uji bertanda tangan debug. Identitas debug dipertahankan melalui Actions cache; belum memakai kunci rilis produksi. Build emulator memeriksa jalur implementasi, belum mensertifikasi kualitas, panas atau perilaku Camera2 di Xiaomi 13T.
+APK adalah build uji bertanda tangan debug. Pemeriksaan sertifikat menemukan kunci berbeda dari 0.1.1: cache keystore tidak tersimpan karena lokasi yang dikonfigurasi tidak ada. APK 0.2.0 tidak dapat menimpa 0.1.1. Jika memilih instalasi bersih, amankan video, berkas LUT asli dan pengaturan dahulu; penghapusan aplikasi menghapus data privat serta salinan LUT internal. Kunci penandatanganan permanen belum tersedia. Build emulator memeriksa jalur implementasi, belum mensertifikasi kualitas, panas atau perilaku Camera2 di Xiaomi 13T.
 
 ## Batas versi awal
 
