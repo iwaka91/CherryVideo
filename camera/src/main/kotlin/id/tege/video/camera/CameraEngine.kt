@@ -62,6 +62,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private var look=0
     private var recordAudio=false
     private var requestedAudio=0
+    private var recordingStartNs=0L
     private val focus=FocusPullSession()
     private var exposureInfo=""
     @Volatile var isReady=false; private set
@@ -88,7 +89,13 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 val legacyOffset=if(Build.VERSION.SDK_INT<33 && entry.characteristics[C.SENSOR_INFO_TIMESTAMP_SOURCE]==C.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME)
                     SystemClock.elapsedRealtimeNanos()-System.nanoTime() else 0L
                 renderer=VideoRenderer(surface,p.width,p.height,sensorRotation=entry.rotation,
-                    producerMirrored=Build.VERSION.SDK_INT<33 && entry.front,timestampOffsetNs=legacyOffset,outputFps=p.fps) { message -> handler.post {
+                    producerMirrored=Build.VERSION.SDK_INT<33 && entry.front,timestampOffsetNs=legacyOffset,outputFps=p.fps,
+                    onPreviewReady={ handler.post {
+                        if(!closing && session!=null) {
+                            isReady=true
+                            ui { listener.onReady(entry);listener.onStatus("Siap · ${profile.label}${if(profile.highSpeed) " · high-speed, uji FPS aktual" else ""}") }
+                        }
+                    } }) { message -> handler.post {
                     if(!closing) { if(isRecording) stopInternal();error(message) }
                 } }.apply { resize(w,h,rotation,entry.front) }
                 val manager=context.getSystemService(CameraManager::class.java)
@@ -115,7 +122,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 session=value
                 try {
                     request=camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply { addTarget(input) }
-                    applyControls();isReady=true;ui { listener.onReady(entry);listener.onStatus("Siap · ${profile.label}${if(profile.highSpeed) " · high-speed, uji FPS aktual" else ""}") }
+                    applyControls()
                 } catch(e: Exception) { error(e.message ?: "Konfigurasi kamera gagal.") }
             }
             override fun onConfigureFailed(value: CameraCaptureSession) { value.close();error("Kamera menolak sesi video ${profile.label}.") }
@@ -233,6 +240,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             }
             encoderSurface=rec.surface
             rec.start()
+            recordingStartNs=System.nanoTime()
             renderer!!.attachEncoder(encoderSurface!!)
             isRecording=true;busy=false;ui { listener.onRecording(true) }
         } catch(e: Exception) {
@@ -246,11 +254,20 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private fun stopInternal() {
         if(!isRecording || busy) return
         busy=true;isRecording=false;focus.cancel()
+        val stoppedAtNs=System.nanoTime()
+        var submission=JSONObject()
         var stopped=false
         try {
             // Destroying EGL first disconnects the producer and frees queued buffers.
             // Stop submitting, drain MediaRecorder, then release the EGL window.
             runCatching { renderer?.pauseEncoder() }.onFailure { Log.w("TeGeVideo","Could not finish pending GPU work",it) }
+            renderer?.let { r ->
+                submission=JSONObject().put("frames",r.renderedFrames)
+                    .put("timestampSpanMs",(r.lastEncodedTimestampNs-r.firstEncodedTimestampNs)/1_000_000.0)
+                    .put("lastFrameAgeMs",(stoppedAtNs-r.lastEncodedTimestampNs)/1_000_000.0)
+                    .put("recordingClockSpanMs",(stoppedAtNs-recordingStartNs)/1_000_000.0)
+                Log.i("CherryVideo","Encoder submission: $submission")
+            }
             recorder?.stop();stopped=true
         } catch(e: Exception) { error("Video belum dapat difinalisasi: ${e.cause?.message ?: e.message}") }
         finally {
@@ -266,6 +283,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                     .put("look",look).put("strength",intensity.toDouble()).put("baked",bake)
                     .put("audioSourceRequest",requestedAudio).put("lastSensorExposure",exposureInfo)
                     .put("captureFps",profile.captureFps).put("highSpeed",profile.highSpeed).put("preview",previewStats)
+                    .put("encoderSubmission",submission)
                 val saved=VideoFiles.publish(context,file,name,report)
                 lastSaved=saved;ui { listener.onSaved(saved) }
             } catch(e: Exception) { error("Penyimpanan belum selesai. Berkas sementara dipertahankan: ${e.message}") }

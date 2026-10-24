@@ -23,6 +23,7 @@ class VideoRenderer(
     private val producerMirrored: Boolean = false,
     timestampOffsetNs: Long = 0L,
     private val outputFps: Int = 30,
+    private val onPreviewReady: () -> Unit = {},
     private val onFailure: (String) -> Unit,
 ) : AutoCloseable {
     private val thread=HandlerThread("Cherry-GL",android.os.Process.THREAD_PRIORITY_DISPLAY).apply { start() }
@@ -51,6 +52,7 @@ class VideoRenderer(
     private var encoderGate=FrameGate(outputFps)
     private val previewGate=FrameGate(60)
     private var frameScheduled=false
+    private var previewReady=false
     private var statsStart=0L
     private var statsFrames=0
     private var statsRenderNs=0L
@@ -61,6 +63,7 @@ class VideoRenderer(
     private var closed=false
     @Volatile var renderedFrames=0L; private set
     @Volatile var lastEncodedTimestampNs=0L; private set
+    @Volatile var firstEncodedTimestampNs=0L; private set
     private val uv=FloatArray(16)
     private val mvp=FloatArray(16)
     private val vertices=ByteBuffer.allocateDirect(4*4*4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
@@ -140,7 +143,7 @@ class VideoRenderer(
         check(encoder==EGL14.EGL_NO_SURFACE)
         encoder=EGL14.eglCreateWindowSurface(display,config,surface,intArrayOf(EGL14.EGL_NONE),0)
         check(encoder!=EGL14.EGL_NO_SURFACE) { "Encoder EGL surface unavailable" }
-        encoderGate=FrameGate(outputFps);renderedFrames=0L;lastEncodedTimestampNs=0L;encoding=true
+        encoderGate=FrameGate(outputFps);renderedFrames=0L;lastEncodedTimestampNs=0L;firstEncodedTimestampNs=0L;encoding=true
     } }
     /** Keep the BufferQueue connected until MediaRecorder has drained its pending frames. */
     fun pauseEncoder() { sync {
@@ -167,12 +170,14 @@ class VideoRenderer(
             if(previewGate.accept(stamp)) {
                 draw(window,width,height,true)
                 check(EGL14.eglSwapBuffers(display,window)) { "Preview swap failed" };previewDrawn=true
+                if(!previewReady) { previewReady=true;onPreviewReady() }
             }
             if(encoding && encoder!=EGL14.EGL_NO_SURFACE && encoderGate.accept(stamp)) {
                 draw(encoder,sourceWidth,sourceHeight,false)
                 check(EGLExt.eglPresentationTimeANDROID(display,encoder,frameClock.monotonic(stamp))) { "Encoder timestamp failed" }
                 check(EGL14.eglSwapBuffers(display,encoder)) { "Encoder swap failed" }
                 renderedFrames++;lastEncodedTimestampNs=frameClock.monotonic(stamp)
+                if(firstEncodedTimestampNs==0L) firstEncodedTimestampNs=lastEncodedTimestampNs
             }
             if(previewDrawn) {
                 if(statsStart==0L) statsStart=started

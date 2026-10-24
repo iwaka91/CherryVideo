@@ -14,6 +14,8 @@ References: [Android output timestamp/mirror contract](https://developer.android
 
 0.2.0 stores new video in Movies/CherryVideo and retains package id.tege.video for updates. Internal qualification now runs API 35 and 36, decoded motion at distinct times, A/V epochs/duration, orientation/mirror and UI selection/dock checks. Physical-device latency, smoothness, image orientation and sustained 1080p/4K performance remain mandatory follow-up checks.
 
+Readiness now waits for the first successfully rendered preview frame. Stopping pauses GL submissions and completes GPU work while retaining the encoder BufferQueue, drains MediaRecorder, then destroys the EGL encoder surface. Diagnostics compare submitted-frame timing with the encoded timeline. CI uses a PulseAudio virtual microphone with an 880 Hz reference tone instead of disabling emulator audio; independent decoding also requires non-silent recorded audio. GPU color checks cover 2³, 17³ and 33³ tables.
+
 Target: Xiaomi 13T 2306EPN60G, Android 16/API 36. App label TeGe Video, package id.tege.video. No photography path, vendor binaries, login, networking or cloud processing.
 
 ## Source decisions

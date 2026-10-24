@@ -1,5 +1,7 @@
 """Independent presentation timing, A/V alignment, duration and moving decoded pixels."""
 import json
+import array
+import math
 import pathlib
 import subprocess
 import sys
@@ -54,11 +56,18 @@ def inspect(video):
     assert len(pixels) >= 12 and all(len(p) == 2304 for p in pixels)
     differences = [sum(abs(a-b) for a,b in zip(pixels[0],p))/2304 for p in pixels[1:]]
     assert max(differences) > 1.0, f"Decoded video shows no meaningful motion: {video}"
+    audio_rms = None
+    if any(s["codec_type"] == "audio" for s in info["streams"]):
+        samples = array.array("f", subprocess.check_output([
+            "ffmpeg", "-v", "error", "-i", str(video), "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "f32le", "-"]))
+        audio_rms = math.sqrt(sum(x*x for x in samples)/len(samples))
+        assert audio_rms > .001, f"Virtual reference microphone was not recorded: {video}"
     return {"file": str(video), "width": stream["width"], "height": stream["height"],
             "frames": len(times), "actual_fps": (len(times)-1)/(times[-1]-times[0]),
             "first_video_pts": times[0], "container_duration": duration,
             "max_gap_ms": 1000*max(b-a for a,b in zip(times,times[1:])),
             "max_pixel_change": max(differences),
+            "audio_rms": audio_rms,
             "scope": "Emulator functional evidence; no Xiaomi performance claim"}
 
 

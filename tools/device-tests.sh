@@ -15,6 +15,7 @@ if [[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" == "1" ]]; then
   adb shell settings put global heads_up_notifications_enabled 0
   adb shell wm size 480x854
   adb shell wm density 160
+  adb emu avd hostmicon
 fi
 bash gradlew --no-daemon :app:connectedDebugAndroidTest || {
   adb logcat -d -v threadtime > "$evidence_path/logcat.txt"
