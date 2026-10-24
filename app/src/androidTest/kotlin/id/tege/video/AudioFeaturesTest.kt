@@ -75,9 +75,11 @@ class AudioFeaturesTest {
             }
             await("Camera unavailable") { activity.engine?.isReady==true }
             scenario.onActivity { it.window.decorView.findViewWithTag<Button>("audio").performClick() }
-            UiDevice.getInstance(instrumentation)
-            UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text("Suara Jernih"))
-            assertTrue(UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Suara Jernih")).click())
+            val preset=UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Suara Jernih"))
+            if(!preset.exists() || preset.visibleBounds.isEmpty) {
+                assertTrue(UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text("Suara Jernih")))
+            }
+            assertTrue(preset.click())
             UiDevice.getInstance(instrumentation).findObject(UiSelector().resourceId("android:id/button2")).click()
             scenario.onActivity { assertTrue(it.window.decorView.findViewWithTag<Button>("audio").text.contains("Suara Jernih")) }
             assertEquals(1,context.getSharedPreferences("tege",0).getInt("audioMode",-1))

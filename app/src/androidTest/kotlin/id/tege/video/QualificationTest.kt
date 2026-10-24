@@ -103,9 +103,11 @@ class QualificationTest {
             }
             screenshot("pro-landscape.png")
             tap(activity,"audio")
-            UiDevice.getInstance(instrumentation)
-            UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text("Reduksi Kuat"))
-            assertTrue(UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Reduksi Kuat")).click())
+            val preset=UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Reduksi Kuat"))
+            if(!preset.exists() || preset.visibleBounds.isEmpty) {
+                assertTrue(UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text("Reduksi Kuat")))
+            }
+            assertTrue(preset.click())
             UiDevice.getInstance(instrumentation).findObject(UiSelector().resourceId("android:id/button2")).click()
             tap(activity,"record")
             await("Landscape recorder did not start") { activity.engine?.isRecording==true }
