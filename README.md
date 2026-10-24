@@ -8,6 +8,8 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 Perbaikan sinkronisasi awal rekaman: audio dan video memakai satu epoch relatif sebelum encoding, waktu PCM mengacu timestamp tangkapan mikrofon, dan bagian awal yang belum tumpang tindih dipangkas pada keyframe video. Validasi sinkronisasi tetap aktif. Diagnostik ekspor menyertakan percobaan rekaman terakhir, termasuk yang gagal. Berkas sementara lama tidak dihapus atau dipulihkan otomatis. Uji ulang Xiaomi 13T tetap diperlukan.
 
+Versi APK hotfix bernama **Cherry Video Uji** (`id.tege.video.hotfix`), dipasang berdampingan agar berkas sementara versi lama tetap aman. Paket produksi tetap `id.tege.video`.
+
 ## Fitur
 
 - 1080p30 sebagai pilihan awal; 4K30 jika kamera/encoder mendukung. 1080p60 dapat memakai sesi standar atau constrained high-speed 120+ fps dengan sampling 60 fps waktu normal. Jalur high-speed ditandai HS (uji), tanpa kontrol manual/OIS/EIS; perlu verifikasi Xiaomi. AVC/HEVC.

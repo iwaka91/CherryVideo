@@ -21,10 +21,10 @@ bash gradlew --no-daemon :app:connectedDebugAndroidTest || {
   timeout 15s adb logcat -d -v threadtime > "$evidence_path/logcat.txt" || true
   timeout 15s adb shell screencap -p /sdcard/qualification-failure.png || true
   timeout 15s adb pull /sdcard/qualification-failure.png "$evidence_path/" || true
-  timeout 15s adb pull /sdcard/Android/data/id.tege.video/files/qualification/. "$evidence_path/" || true
+  timeout 15s adb pull /sdcard/Android/data/id.tege.video.hotfix/files/qualification/. "$evidence_path/" || true
   exit 1
 }
-adb pull /sdcard/Android/data/id.tege.video/files/qualification/. "$evidence_path/"
+adb pull /sdcard/Android/data/id.tege.video.hotfix/files/qualification/. "$evidence_path/"
 adb logcat -d -v threadtime > "$evidence_path/logcat.txt"
-adb shell dumpsys package id.tege.video > "$evidence_path/package.txt"
+adb shell dumpsys package id.tege.video.hotfix > "$evidence_path/package.txt"
 cp -R app/build/outputs/androidTest-results "$evidence_path/test-results"

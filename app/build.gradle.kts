@@ -9,11 +9,22 @@ android {
         targetSdk = 36
         versionCode = 4
         versionName = "0.2.1-beta"
+        manifestPlaceholders["appLabel"] = "Cherry Video"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
-    buildTypes { release { isMinifyEnabled = false } }
+    buildTypes {
+        debug {
+            // Keep the old application's pending recordings intact while testing this hotfix.
+            applicationIdSuffix = ".hotfix"
+            manifestPlaceholders["appLabel"] = "Cherry Video Uji"
+            System.getenv("CHERRY_DEBUG_KEYSTORE")?.let { path ->
+                signingConfig = signingConfigs.getByName("debug").apply { storeFile = file(path) }
+            }
+        }
+        release { isMinifyEnabled = false }
+    }
     lint { abortOnError = true; checkDependencies = true }
     testOptions { animationsDisabled = true }
 }

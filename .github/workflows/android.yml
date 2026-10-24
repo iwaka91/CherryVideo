@@ -15,6 +15,7 @@ jobs:
     env:
       QEMU_AUDIO_DRV: alsa
       ALSA_CONFIG_PATH: ${{ github.workspace }}/tools/asound.conf
+      CHERRY_DEBUG_KEYSTORE: ${{ github.workspace }}/.signing/debug.keystore
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -25,8 +26,14 @@ jobs:
       - name: Retain personal test signing identity
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: tege-private-test-signing-v1
+          path: .signing/debug.keystore
+          key: cherry-hotfix-test-signing-v1
+      - name: Initialize explicit test signing identity if missing
+        run: |
+          mkdir -p .signing
+          if [ ! -f "$CHERRY_DEBUG_KEYSTORE" ]; then
+            keytool -genkeypair -keystore "$CHERRY_DEBUG_KEYSTORE" -storepass android -keypass android -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
+          fi
       - name: Compile, lint and JVM tests
         run: bash gradlew --no-daemon :core:test :camera:lintDebug :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Enable KVM
