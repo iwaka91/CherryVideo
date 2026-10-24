@@ -227,7 +227,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(options.isEmpty()) { onError("Tidak ada profil video standar yang memenuhi batas kamera dan encoder.");return }
         if(selected !in options) { selected=options.first();onStatus("Profil tersedia: ${selected.label}") }
         quality.text=selected.label;lens.text=if(camera.id=="0") "Utama · 1×" else if(camera.front) "Depan" else "Kamera ${camera.id}"
-        if(controls.stabilization<0) controls=controls.copy(stabilization=if(camera.ois) 1 else if(camera.eis) 2 else 0)
+        if(controls.stabilization<0 || (controls.stabilization==1 && !camera.ois) || (controls.stabilization==2 && !camera.eis))
+            controls=controls.copy(stabilization=if(camera.ois) 1 else if(camera.eis) 2 else 0)
         if(selected.highSpeed) controls=controls.copy(stabilization=0,focus=null,iso=0,shutterNs=0)
         prefs.edit().putInt("width",selected.width).putInt("height",selected.height).putInt("fps",selected.fps).putInt("captureFps",selected.captureFps).apply()
         updateSelectionLabels()

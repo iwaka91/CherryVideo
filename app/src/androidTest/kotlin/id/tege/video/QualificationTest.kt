@@ -48,6 +48,7 @@ class QualificationTest {
     private fun await(message: String,timeout: Long=25000,predicate: ()->Boolean) {
         val deadline=System.currentTimeMillis()+timeout
         while(System.currentTimeMillis()<deadline) { if(predicate()) return;Thread.sleep(100) }
+        context.filesDir.listFiles()?.filter { it.name.startsWith("pending-") && it.extension=="mp4" }?.forEach { it.copyTo(File(evidence,it.name),overwrite=true) }
         screenshot("test-failure.png");fail(message)
     }
     private fun tap(activity: MainActivity,tag: String) {
@@ -206,7 +207,8 @@ class QualificationTest {
             tap(activity,"stabilization")
             UiDevice.getInstance(instrumentation).findObject(UiSelector().text("OFF")).click()
             scenario.onActivity { assertTrue(it.window.decorView.findViewWithTag<Button>("stabilization").text.contains("OFF")) }
-            tap(activity,"settings");tap(activity,"about")
+            tap(activity,"settings")
+            UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Tentang Cherry Video")).click()
             assertTrue(UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Cherry Video")).exists())
             assertFalse(UiDevice.getInstance(instrumentation).findObject(UiSelector().textContains("TERMS AND CONDITIONS")).exists())
             screenshot("about.png")
@@ -256,7 +258,8 @@ class QualificationTest {
             repeat(70) { index ->
                 val canvas=renderer.input.lockCanvas(null);canvas.drawColor(Color.RED)
                 val paint=android.graphics.Paint().apply { color=Color.WHITE }
-                val x=(index%60)*4f;canvas.drawRect(x,180f,x+35f,230f,paint)
+                val x=if(index<35) 20f else 250f
+                canvas.drawRect(x,180f,x+35f,230f,paint)
                 renderer.input.unlockCanvasAndPost(canvas)
                 Thread.sleep(34)
             }
