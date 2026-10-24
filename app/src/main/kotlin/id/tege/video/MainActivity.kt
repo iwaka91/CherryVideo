@@ -40,6 +40,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private lateinit var lens: Button
     private lateinit var stable: Button
     private lateinit var audioButton: Button
+    private lateinit var zoomButton: Button
+    private lateinit var zoomDock: LinearLayout
+    private lateinit var zoomSeek: SeekBar
     private lateinit var controlHost: FrameLayout
     private lateinit var normalControls: LinearLayout
     private var colorDock=false
@@ -55,6 +58,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var pro=false
     private var hevc=false
     private var audio=1
+    private var audioMode=AudioMode.NATURAL
+    private var audioDeviceId=0
     private var lut: CubeLut?=null
     private var lutName=""
     private var look=0
@@ -101,6 +106,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         pro=prefs.getBoolean("pro",false);hevc=prefs.getBoolean("hevc",false);audio=prefs.getInt("audio",1)
         controls=Controls(stabilization=prefs.getInt("stabilization",-1))
+        audioMode=AudioMode.fromOrdinal(prefs.getInt("audioMode",0));audioDeviceId=prefs.getInt("audioDeviceId",0)
         cameraIndex=prefs.getInt("cameraIndex",0)
         selected=VideoProfile(prefs.getInt("width",1920),prefs.getInt("height",1080),prefs.getInt("fps",30),prefs.getInt("captureFps",30))
         look=prefs.getInt("look",0);strength=prefs.getFloat("strength",1f);bake=prefs.getBoolean("bake",true)
@@ -145,6 +151,16 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             }
         }
         preview=SurfaceView(this).apply { holder.addCallback(this@MainActivity);tag="viewfinder" }
+        val pinch=ScaleGestureDetector(this,object: ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                setZoom(controls.zoom*detector.scaleFactor);return true
+            }
+        })
+        preview.setOnTouchListener { view,event ->
+            pinch.onTouchEvent(event)
+            if(event.actionMasked==MotionEvent.ACTION_UP) view.performClick()
+            event.pointerCount>1 || pinch.isInProgress
+        }
         grid=GridOverlay(this)
         val frame=FrameLayout(this).apply { addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1)) }
         val panel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL };normalControls=panel
@@ -152,7 +168,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         mode=button(if(pro) "Pro" else "Simple","mode") {
             if(locked()) return@button
             pro=!pro
-            if(!pro) { controls=Controls(stabilization=controls.stabilization);engine?.update(controls) }
+            if(!pro) { controls=Controls(stabilization=controls.stabilization,zoom=controls.zoom);engine?.update(controls) }
             prefs.edit().putBoolean("pro",pro).apply();mode.text=if(pro) "Pro" else "Simple"
             proRow.visibility=if(pro) View.VISIBLE else View.GONE
         }
@@ -162,6 +178,23 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         detail=text("1080p · cinematic video",11f,muted)
         lens=button("Kamera utama","lens") { chooseLens() }
         quality=button(selected.label,"quality") { chooseQuality() }
+        zoomButton=button("1.0×","zoom") {
+            zoomDock.visibility=if(zoomDock.visibility==View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        zoomSeek=SeekBar(this).apply {
+            tag="zoom-slider";max=1000;contentDescription="Zoom kamera"
+            setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar,value: Int,fromUser: Boolean) {
+                    if(fromUser) cameras.getOrNull(cameraIndex)?.let { c -> setZoom(c.zoomMin+(c.zoomMax-c.zoomMin)*value/1000f) }
+                }
+                override fun onStartTrackingTouch(bar: SeekBar) {};override fun onStopTrackingTouch(bar: SeekBar) {}
+            })
+        }
+        zoomDock=LinearLayout(this).apply {
+            visibility=View.GONE;gravity=Gravity.CENTER_VERTICAL
+            addView(button("1×","zoom-reset") { setZoom(1f) },LinearLayout.LayoutParams(dp(48),dp(40)))
+            addView(zoomSeek,LinearLayout.LayoutParams(0,dp(44),1f))
+        }
         colors=button("Warna / LUT","colors") { showColors() }
         stable=button("Stabilisasi","stabilization") { showStabilization() }
         audioButton=button("Audio","audio") { showAudio() }
@@ -174,10 +207,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             if(colorDock) closeColors()
             val e=engine ?: return@button
             if(e.isRecording) { record.isEnabled=false;onStatus("Menyimpan dan memeriksa video…");e.stop() }
-            else if(e.isReady && !e.busy) { record.isEnabled=false;onStatus("Memulai rekaman…");e.start(audio) }
+            else if(e.isReady && !e.busy) { record.isEnabled=false;onStatus("Memulai rekaman…");e.start(audio,audioMode,audioDeviceId) }
         }.apply { textSize=18f;setTextColor(Color.rgb(16,19,21));background=shape(Color.rgb(255,110,99),28);isEnabled=false }
         val gallery=button("Galeri","gallery") { showGallery() }
-        panel.addView(row(lens,quality));panel.addView(row(colors,stable));panel.addView(proRow)
+        panel.addView(row(lens,quality,zoomButton));panel.addView(zoomDock);panel.addView(row(colors,stable));panel.addView(proRow)
         panel.addView(row(audioButton,settings))
         val recordRow=LinearLayout(this).apply {
             gravity=Gravity.CENTER_VERTICAL;addView(gallery,LinearLayout.LayoutParams(dp(74),dp(52)).apply { setMargins(dp(3),dp(6),dp(6),dp(6)) })
@@ -202,11 +235,11 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun thermalLabel()=when { thermal>=3 -> "Panas";thermal>=1 -> "Suhu meningkat";else -> "Suhu normal" }
     private fun gradeLabel()=if(lut!=null) lutName else arrayOf("Natural","Hangat","Teal","Mono").getOrElse(look) { "Natural" }
     private fun stabilizationLabel()=when(controls.stabilization) { 1->"OIS";2->"EIS";else->"OFF" }
-    private fun audioLabel()=when(audio) { 1->"Kamera";2->"Kabel/USB";else->"OFF" }
+    private fun audioLabel()=when(audio) { 1->"Kamera";2->"Mic eksternal";else->"OFF" }
     private fun updateSelectionLabels() {
         colors.text="LUT · ${gradeLabel()}";colors.contentDescription=colors.text
         stable.text="Stabilisasi · ${stabilizationLabel()}";stable.contentDescription=stable.text
-        audioButton.text="Audio · ${audioLabel()}";audioButton.contentDescription=audioButton.text
+        audioButton.text="Audio · ${audioLabel()}${if(audio!=0) "\n${audioMode.label}" else ""}";audioButton.contentDescription=audioButton.text
         colorTitle?.text="${gradeLabel()} · ${(strength*100).toInt()}%"
         lookButtons.forEachIndexed { index,b ->
             val active=lut==null && look==index
@@ -226,7 +259,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val options=camera.profiles(hevc);qualityOptions=options
         if(options.isEmpty()) { onError("Tidak ada profil video standar yang memenuhi batas kamera dan encoder.");return }
         if(selected !in options) { selected=options.first();onStatus("Profil tersedia: ${selected.label}") }
-        quality.text=selected.label;lens.text=if(camera.id=="0") "Utama · 1×" else if(camera.front) "Depan" else "Kamera ${camera.id}"
+        quality.text=selected.label;lens.text=camera.label.substringBefore(" · ID")
+        controls=controls.copy(zoom=if(selected.highSpeed) 1f else ZoomPolicy.clamp(controls.zoom,camera.zoomMin,camera.zoomMax))
+        updateZoomUi()
         if(controls.stabilization<0 || (controls.stabilization==1 && !camera.ois) || (controls.stabilization==2 && !camera.eis))
             controls=controls.copy(stabilization=if(camera.ois) 1 else if(camera.eis) 2 else 0)
         if(selected.highSpeed) controls=controls.copy(stabilization=0,focus=null,iso=0,shutterNs=0)
@@ -235,6 +270,21 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val e=CameraEngine(applicationContext,this);engine=e
         e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation())
         e.update(controls);e.grade(lut,strength,bake,look)
+    }
+    private fun setZoom(ratio: Float) {
+        val camera=cameras.getOrNull(cameraIndex) ?: return
+        if(selected.highSpeed || engine?.busy==true) return
+        controls=controls.copy(zoom=ZoomPolicy.clamp(ratio,camera.zoomMin,camera.zoomMax))
+        engine?.update(controls);updateZoomUi()
+    }
+    private fun updateZoomUi() {
+        val camera=cameras.getOrNull(cameraIndex) ?: return
+        zoomButton.text=String.format(Locale.US,"%.1f×",controls.zoom)
+        zoomButton.contentDescription="Zoom ${zoomButton.text}"
+        zoomButton.isEnabled=!selected.highSpeed && camera.zoomMax>camera.zoomMin
+        zoomSeek.isEnabled=zoomButton.isEnabled
+        zoomSeek.progress=if(camera.zoomMax>camera.zoomMin) ((controls.zoom-camera.zoomMin)/(camera.zoomMax-camera.zoomMin)*1000).toInt() else 0
+        if(!zoomButton.isEnabled) zoomDock.visibility=View.GONE
     }
     private fun retireEngine() {
         val old=engine ?: return
@@ -264,6 +314,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     override fun onRequestPermissionsResult(requestCode: Int,permissions: Array<out String>,results: IntArray) {
         super.onRequestPermissionsResult(requestCode,permissions,results)
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) audio=0
+        if(requestCode==1) {
+            cameras=runCatching { CameraCatalog.list(this) }.getOrDefault(emptyList())
+            cameraIndex=cameraIndex.coerceIn(0,(cameras.size-1).coerceAtLeast(0))
+        }
         updateSelectionLabels()
         startCamera()
     }
@@ -297,7 +351,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun chooseLens() {
         if(locked()) return
-        AlertDialog.Builder(this).setTitle("Pilih kamera").setSingleChoiceItems(cameras.map { it.label }.toTypedArray(),cameraIndex) { dialog,index ->
+        AlertDialog.Builder(this).setTitle("Lensa yang dilaporkan perangkat").setSingleChoiceItems(cameras.map { it.label }.toTypedArray(),cameraIndex) { dialog,index ->
             cameraIndex=index;prefs.edit().putInt("cameraIndex",index).apply();controls=Controls();focusA=0f;focusB=0f;dialog.dismiss();restart()
         }.setNegativeButton("Tutup",null).show()
     }
@@ -436,12 +490,51 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun showAudio() {
         if(locked()) return
-        AlertDialog.Builder(this).setTitle("Sumber audio").setSingleChoiceItems(arrayOf("Tanpa audio","Mikrofon kamera","Mikrofon kabel / USB"),audio) { dialog,index ->
-            if(index!=0 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),2)
-            else { audio=index;prefs.edit().putInt("audio",audio).apply();updateSelectionLabels();onStatus("Audio: ${arrayOf("tanpa audio","mikrofon kamera","mikrofon kabel / USB")[index]}") }
-            dialog.dismiss()
+        val panel=body()
+        panel.addView(text("Input audio",15f,gold))
+        val sources=RadioGroup(this)
+        val sourceIds=IntArray(3) { View.generateViewId() }
+        listOf("Tanpa audio","Mikrofon kamera","Mic eksternal").forEachIndexed { index,name ->
+            sources.addView(RadioButton(this).apply { id=sourceIds[index];text=name;tag="audio-source-$index";setTextColor(Color.WHITE) })
+        }
+        sources.check(sourceIds[audio.coerceIn(0,2)])
+        sources.setOnCheckedChangeListener { _,id ->
+            val index=sourceIds.indexOf(id)
+            if(index>0 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),2)
+            else if(index>=0) { audio=index;prefs.edit().putInt("audio",audio).apply();updateSelectionLabels() }
+        }
+        panel.addView(sources)
+        panel.addView(button("Pilih perangkat mic eksternal","external-input") { chooseExternalInput() },LinearLayout.LayoutParams(-1,dp(44)))
+        panel.addView(text("Mic wireless dengan penerima USB mengikuti input USB. Bluetooth memerlukan profil mikrofon, izin, dan dukungan Android; perangkat yang gagal menjadi input aktif akan dilaporkan.",12f,muted))
+        if(Build.VERSION.SDK_INT>=31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)
+            panel.addView(button("Izinkan mic Bluetooth","bluetooth-permission") { requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT),3) },LinearLayout.LayoutParams(-1,dp(44)))
+        panel.addView(text("Pengolahan suara",15f,gold))
+        val modes=RadioGroup(this)
+        val ids=AudioMode.entries.map { View.generateViewId() }
+        AudioMode.entries.forEachIndexed { index,value ->
+            modes.addView(RadioButton(this).apply { id=ids[index];text=value.label;tag="audio-mode-$index";setTextColor(Color.WHITE)
+                isEnabled=value==AudioMode.NATURAL || AudioProcessor.available })
+        }
+        modes.check(ids[audioMode.ordinal])
+        modes.setOnCheckedChangeListener { _,id ->
+            val index=ids.indexOf(id)
+            if(index>=0) { audioMode=AudioMode.entries[index];prefs.edit().putInt("audioMode",index).apply();updateSelectionLabels() }
+        }
+        panel.addView(modes)
+        panel.addView(text("Natural: tanpa peredam tambahan. Suara Jernih: reduksi sedang. Reduksi Kuat: lebih agresif, dapat mengurangi detail suara dan suasana. Pilih sebelum merekam.",12f,muted))
+        if(!AudioProcessor.available) panel.addView(text("Pengolah suara tidak tersedia pada perangkat ini. Gunakan Natural.",13f,gold))
+        sheet("Audio",panel)
+    }
+    private fun chooseExternalInput() {
+        val devices=AudioInputs.devices(this).filter { AudioInputs.external(it) }
+        if(devices.isEmpty()) { message("Mic eksternal","Belum ada input eksternal yang dilaporkan Android. Sambungkan penerima USB/kabel atau hubungkan mic Bluetooth, lalu buka kembali pilihan ini.");return }
+        AlertDialog.Builder(this).setTitle("Pilih mic eksternal").setSingleChoiceItems(devices.map { AudioInputs.name(it) }.toTypedArray(),devices.indexOfFirst { it.id==audioDeviceId }) { dialog,index ->
+            audioDeviceId=devices[index].id;audio=2
+            prefs.edit().putInt("audio",audio).putInt("audioDeviceId",audioDeviceId).apply()
+            updateSelectionLabels();dialog.dismiss();onStatus("Mic dipilih: ${AudioInputs.name(devices[index])}. Input aktif diverifikasi saat rekam.")
         }.setNegativeButton("Tutup",null).show()
     }
+
     private fun showFocus() {
         if(selected.highSpeed) { message("Fokus","Sesi high-speed memakai autofocus otomatis. Gunakan 30 fps untuk kontrol fokus manual.");return }
         val c=cameras.getOrNull(cameraIndex) ?: return
@@ -524,6 +617,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         panel.addView(text("Kamera video sinematik untuk Xiaomi 13T.\nDikembangkan untuk Toto Gutomo.",15f))
         panel.addView(text("Komponen open source",16f,gold))
         panel.addView(text("CubeLut dan FocusPull diadaptasi dari OpenCineCam.\nCopyright 2026 OpenCineCam contributors.\nApache License 2.0.",14f))
+        panel.addView(text("Peredam suara: SpeexDSP, lisensi BSD. Pemrosesan lokal di perangkat.",14f))
+        panel.addView(button("Lisensi SpeexDSP","speex-license") { message("Lisensi SpeexDSP",assets.open("SPEEXDSP-LICENSE").bufferedReader().use { it.readText() }) },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Source Cherry Video","source-link") { openLink("https://github.com/iwaka91/CherryVideo") },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Source OpenCineCam","upstream-link") { openLink("https://github.com/LibreStatic/opencinecam") },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(6) })
         panel.addView(button("Baca lisensi lengkap","license") {
@@ -541,6 +636,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val attempt=File(filesDir,"last-recording-attempt.json").takeIf { it.exists() }?.readText()
         exportJson=JSONObject().put("device","${Build.MANUFACTURER} ${Build.MODEL}").put("api",Build.VERSION.SDK_INT)
             .put("version",BuildConfig.VERSION_NAME).put("cameras",JSONArray(cameras.map { it.report() }))
+            .put("audioInputs",AudioInputs.catalog(this)).put("audioProcessorAvailable",AudioProcessor.available)
+            .put("audioModeSelected",audioMode.name).put("requestedAudioDeviceId",audioDeviceId)
+            .put("zoomSelected",controls.zoom.toDouble()).put("zoomApplied",engine?.appliedZoom?.toDouble())
+            .put("activePhysicalId",engine?.activePhysicalId ?: JSONObject.NULL)
             .put("physicalCameras",CameraCatalog.physicalReport(this,cameras)).put("preview",engine?.previewStats)
             .put("selectedCamera",cameras.getOrNull(cameraIndex)?.id).put("selectedProfile",selected.label).put("codec",if(hevc) "HEVC" else "AVC")
             .put("lastRecording",last?.let { JSONObject(it) } ?: JSONObject.NULL)
@@ -549,8 +648,11 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val p=engine?.previewStats ?: JSONObject()
         panel.addView(text("${Build.MANUFACTURER} ${Build.MODEL}\nAndroid API ${Build.VERSION.SDK_INT} · ${BuildConfig.VERSION_NAME}",15f,gold))
         panel.addView(text("Kamera ${cameras.getOrNull(cameraIndex)?.id} · ${selected.label} · ${if(hevc) "HEVC" else "AVC"}\n${String.format(Locale.US,"Preview %.1f fps · render %.1f ms\nJeda frame maksimum %.1f ms",p.optDouble("previewSubmittedFps",0.0),p.optDouble("averageRenderMs",0.0),p.optDouble("maxArrivalGapMs",0.0))}",14f))
+        panel.addView(text("Audio: ${audioLabel()} · ${audioMode.label}\nPengolah suara: ${if(AudioProcessor.available) "tersedia" else "tidak tersedia"}\nZoom: ${String.format(Locale.US,"%.1f×",controls.zoom)}",13f))
+        val timing=attempt?.let { runCatching { JSONObject(it).optJSONObject("recorderTiming") }.getOrNull() }
+        timing?.let { panel.addView(text("Percobaan terakhir: ${it.optString("audioModeLabel")}\nInput aktif: ${it.optJSONObject("actualInput")?.optString("name") ?: "belum diverifikasi"}\nKanal: ${it.optInt("channels")} · Level masuk: ${it.optJSONArray("inputRmsDbfs")} dBFS\nLevel keluar: ${it.optJSONArray("outputRmsDbfs")} dBFS",12f,muted)) }
         cameras.forEach { c ->
-            panel.addView(text("${c.label}\nSensor ${c.rotation}° · fokus 0–${c.minFocus} D\nOIS ${c.ois} · EIS ${c.eis}\nAVC: ${c.profiles(false).joinToString { it.label }}\nHEVC: ${c.profiles(true).joinToString { it.label }}\nHigh-speed 1080: ${c.highSpeedRates(1920,1080).joinToString().ifEmpty { "tidak dilaporkan" }}",13f))
+            panel.addView(text("${c.label} · zoom ${c.zoomMin}–${c.zoomMax}×\nSensor ${c.rotation}° · fokus 0–${c.minFocus} D\nOIS ${c.ois} · EIS ${c.eis}\nAVC: ${c.profiles(false).joinToString { it.label }}\nHEVC: ${c.profiles(true).joinToString { it.label }}\nHigh-speed 1080: ${c.highSpeedRates(1920,1080).joinToString().ifEmpty { "tidak dilaporkan" }}",13f))
         }
         panel.addView(button("JSON lengkap","diagnostic-json") { message("Diagnostik JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Ekspor JSON","export-diagnostic") {

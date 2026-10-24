@@ -30,6 +30,7 @@ import id.tege.video.camera.VideoFiles
 import id.tege.video.camera.VideoRenderer
 import id.tege.video.camera.TextureGeometry
 import id.tege.video.camera.SurfaceRecorder
+import id.tege.video.core.AudioMode
 import id.tege.video.core.CubeLut
 import id.tege.video.core.VideoProfile
 import org.junit.Assert.*
@@ -100,12 +101,15 @@ class QualificationTest {
                 assertTrue("Landscape record button must remain fully visible",button.getGlobalVisibleRect(bounds) && bounds.height()==button.height)
             }
             screenshot("pro-landscape.png")
+            tap(activity,"audio");tap(activity,"audio-mode-2")
+            UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Selesai")).click()
             tap(activity,"record")
             await("Landscape recorder did not start") { activity.engine?.isRecording==true }
             Thread.sleep(2200)
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
             await("Backgrounding did not save the current take") { activity.lastSaved?.name!=saved.name }
             val background=activity.lastSaved!!
+            assertEquals("STRONG",background.report.getJSONObject("recorderTiming").getString("audioMode"))
             context.contentResolver.openInputStream(background.uri)!!.use { input -> File(evidence,"camera-background.mp4").outputStream().use { input.copyTo(it) } }
             File(evidence,"camera-background.json").writeText(background.report.toString(2))
         }
@@ -167,7 +171,8 @@ class QualificationTest {
                 val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
                 val file=File(evidence,"startup-${if(hevc) "hevc" else "avc"}-${if(audio==0) "silent" else "audio"}.mp4")
                 val recorder=SurfaceRecorder(context,file,VideoProfile(320,240,30),hevc,audio,0,100L*1024*1024,
-                    onLimit={ failure="Unexpected test file limit" },onFailure={ failure=it })
+                    onLimit={ failure="Unexpected test file limit" },onFailure={ failure=it },
+                    audioMode=if(hevc) AudioMode.STRONG else AudioMode.CLEAR)
                 try {
                     renderer.resize(320,240,0,false)
                     recorder.prepare();recorder.start()

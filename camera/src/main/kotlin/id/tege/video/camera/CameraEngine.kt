@@ -28,6 +28,7 @@ data class Controls(
     val wb: Int=CaptureRequest.CONTROL_AWB_MODE_AUTO,
     val stabilization: Int=-1,
     val torch: Boolean=false,
+    val zoom: Float=1f,
 )
 
 interface CameraListener {
@@ -62,6 +63,9 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private var recordingStartNs=0L
     private val focus=FocusPullSession()
     private var exposureInfo=""
+    @Volatile var activePhysicalId: String?=null; private set
+    @Volatile var appliedZoom=1f; private set
+    @Volatile var reportedZoom: Float?=null; private set
     @Volatile var isReady=false; private set
     @Volatile var isRecording=false; private set
     @Volatile var busy=false; private set
@@ -97,7 +101,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                     if(!closing) { if(isRecording) stopInternal();error(message) }
                 } }.apply { resize(w,h,rotation,entry.front) }
                 val manager=context.getSystemService(CameraManager::class.java)
-                manager.openCamera(entry.id,object: CameraDevice.StateCallback() {
+                manager.openCamera(entry.openId,object: CameraDevice.StateCallback() {
                     override fun onOpened(camera: CameraDevice) {
                         if(closing) { camera.close();return }
                         device=camera
@@ -126,6 +130,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             override fun onConfigureFailed(value: CameraCaptureSession) { value.close();error("Kamera menolak sesi video ${profile.label}.") }
         }
         val output=OutputConfiguration(input)
+        if(entry.physical) output.setPhysicalCameraId(entry.id)
         if(Build.VERSION.SDK_INT>=33) {
             // SurfaceTexture defaults to the sensor clock, which may include hours of deep sleep.
             output.setTimestampBase(OutputConfiguration.TIMESTAMP_BASE_MONOTONIC)
@@ -142,6 +147,16 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             val high=checkNotNull(session as? CameraConstrainedHighSpeedCaptureSession) { "Sesi high-speed tidak tersedia." }
             high.setRepeatingBurst(high.createHighSpeedRequestList(b.build()),captureCallback,handler)
             return
+        }
+        appliedZoom=ZoomPolicy.clamp(controls.zoom,entry.zoomMin,entry.zoomMax)
+        if(entry.ratioZoom && Build.VERSION.SDK_INT>=30) b.set(CaptureRequest.CONTROL_ZOOM_RATIO,appliedZoom)
+        else if(!entry.physical || entry.physicalCrop) {
+            entry.characteristics[C.SENSOR_INFO_ACTIVE_ARRAY_SIZE]?.let { active ->
+                val crop=ZoomPolicy.crop(active.left,active.top,active.right,active.bottom,appliedZoom.coerceAtLeast(1f))
+                val rect=android.graphics.Rect(crop[0],crop[1],crop[2],crop[3])
+                if(entry.physical) b.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION,rect,entry.id)
+                else b.set(CaptureRequest.SCALER_CROP_REGION,rect)
+            }
         }
         b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,entry.range(profile.fps))
         if(controls.iso>0 && controls.shutterNs>0 && entry.manual) {
@@ -175,6 +190,11 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     }
     private val captureCallback=object: CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(s: CameraCaptureSession,r: CaptureRequest,result: TotalCaptureResult) {
+            reportedZoom=if(Build.VERSION.SDK_INT>=30 && entry.ratioZoom) result[CaptureResult.CONTROL_ZOOM_RATIO]
+                else result[CaptureResult.SCALER_CROP_REGION]?.let { crop ->
+                    entry.characteristics[C.SENSOR_INFO_ACTIVE_ARRAY_SIZE]?.width()?.toFloat()?.div(crop.width().coerceAtLeast(1))
+                }
+            activePhysicalId=if(entry.physical) entry.id else result[CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID]
             exposureInfo="ISO ${result[CaptureResult.SENSOR_SENSITIVITY]} · ${result[CaptureResult.SENSOR_EXPOSURE_TIME]} ns"
         }
     }
@@ -202,7 +222,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         if(!isRecording) orientation=rotation
         runCatching { renderer?.resize(w,h,rotation,entry.front) }
     } }
-    fun start(audioSource: Int) { handler.post {
+    fun start(audioSource: Int,audioMode: AudioMode=AudioMode.NATURAL,audioDeviceId: Int=0) { handler.post {
         if(closing || busy || isRecording || !isReady) return@post
         busy=true
         try {
@@ -215,7 +235,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             val rec=SurfaceRecorder(context,pending!!,profile,hevc,audioSource,orientation,
                 ((StatFs(context.filesDir.path).availableBytes-192L*1024*1024)/2).coerceAtMost(8L*1024*1024*1024),
                 onLimit={ handler.post { if(isRecording) stopInternal() } },
-                onFailure={ message -> handler.post { if(isRecording) stopInternal();error(message) } })
+                onFailure={ message -> handler.post { if(isRecording) stopInternal();error(message) } },audioMode=audioMode,audioDeviceId=audioDeviceId)
             recorder=rec
             rec.prepare()
             encoderSurface=rec.surface
@@ -265,7 +285,8 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         if(stopped && file!=null) {
             try {
                 val report=VideoFiles.inspect(file,profile,recordAudio,orientation)
-                    .put("cameraId",entry.id).put("device","${Build.MANUFACTURER} ${Build.MODEL}")
+                    .put("cameraId",entry.id).put("logicalCameraId",entry.openId).put("activePhysicalId",activePhysicalId ?: JSONObject.NULL)
+                    .put("zoom",appliedZoom.toDouble()).put("reportedZoom",reportedZoom?.toDouble() ?: JSONObject.NULL).put("device","${Build.MANUFACTURER} ${Build.MODEL}")
                     .put("androidApi",Build.VERSION.SDK_INT).put("lutSha256",lut?.sha256 ?: JSONObject.NULL)
                     .put("look",look).put("strength",intensity.toDouble()).put("baked",bake)
                     .put("audioSourceRequest",requestedAudio).put("lastSensorExposure",exposureInfo)

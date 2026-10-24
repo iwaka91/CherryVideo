@@ -4,11 +4,16 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 ![Android qualification](https://github.com/iwaka91/CherryVideo/actions/workflows/android.yml/badge.svg)
 
-## Hotfix 0.2.1
+## Update 0.3.0
 
-Perbaikan sinkronisasi awal rekaman: audio dan video memakai satu epoch relatif sebelum encoding, waktu PCM mengacu timestamp tangkapan mikrofon, dan bagian awal yang belum tumpang tindih dipangkas pada keyframe video. Validasi sinkronisasi tetap aktif. Diagnostik ekspor menyertakan percobaan rekaman terakhir, termasuk yang gagal. Berkas sementara lama tidak dihapus atau dipulihkan otomatis. Uji ulang Xiaomi 13T tetap diperlukan.
+- Audio: Natural (tanpa DSP tambahan aplikasi), Suara Jernih, Reduksi Kuat. Dua preset memakai SpeexDSP dengan batas peredaman -12/-28 dB; angka ini parameter, bukan jaminan hasil. Penguatan otomatis aplikasi tidak digunakan. Efek NS/AGC sistem dicoba nonaktifkan; status sebenarnya dilaporkan.
+- Pemrosesan stereo terpisah, kompensasi jeda 10 ms dan pembilasan ujung audio. Sampel/timestamp tetap mengacu satu epoch seperti hotfix 0.2.1.
+- Zoom: cubit layar dan slider ringkas. Mengikuti zoom-ratio atau crop yang tersedia. Mode high-speed menonaktifkan zoom aplikasi.
+- Katalog lensa mencakup kamera publik dan kandidat fisik yang memiliki profil video. Pemilihan fisik memakai sesi kamera logis; akses sebenarnya tetap bergantung pada HAL perangkat. Nama ultrawide/telefoto adalah klasifikasi perkiraan dari panjang fokus relatif ukuran sensor.
+- Input mic eksternal USB/kabel dan Bluetooth yang diekspos Android. Pilihan input diverifikasi saat rekam dan perubahan rute diperiksa selama rekaman; kegagalan tidak diam-diam memakai mikrofon internal. Mic Bluetooth memerlukan izin dan profil input yang sesuai.
+- Diagnostik ekspor: input aktual, kanal, level masuk/keluar, preset DSP, status NS/AGC sistem, zoom, dan lensa fisik aktif.
 
-Versi APK hotfix bernama **Cherry Video Uji** (`id.tege.video.hotfix`), dipasang berdampingan agar berkas sementara versi lama tetap aman. Paket produksi tetap `id.tege.video`.
+APK pengujian bernama **Cherry Video Uji** (`id.tege.video.hotfix`), sama dengan 0.2.1 Uji. Kunci uji CI dipertahankan; kesamaan sertifikat APK perlu diverifikasi sebelum menganggap update langsung didukung. Paket produksi tetap `id.tege.video`. Data dan berkas sementara lama tidak dihapus atau dipulihkan otomatis.
 
 ## Fitur
 
@@ -16,7 +21,7 @@ Versi APK hotfix bernama **Cherry Video Uji** (`id.tege.video.hotfix`), dipasang
 - Warna Natural, Cinema hangat, Teal lembut, Monokrom. Impor **3D LUT `.cube` hingga 33³ / 4 MiB**, intensitas 0–100%, pilihan pratinjau saja atau diterapkan ke video.
 - Fokus manual dan perpindahan A/B, ISO/shutter, EV, AE lock, preset WB/AWB lock, pilihan OIS atau EIS, lampu kontinu jika tersedia.
 - Audio kamera, mikrofon kabel/USB, atau tanpa audio. Peak meter saat merekam.
-- Panel LUT di luar preview; tombol menampilkan pilihan warna, OFF/EIS/OIS dan audio aktif. About ringkas dengan lisensi terpisah.
+- Panel LUT di luar preview; tombol menampilkan pilihan warna, OFF/EIS/OIS dan audio aktif dan preset peredaman. About ringkas dengan lisensi terpisah.
 - Penyimpanan ke `Movies/CherryVideo`, galeri (termasuk rekaman TeGe lama), diagnostik timing preview dan ekspor JSON dengan FPS aktual.
 - Finalisasi saat masuk latar, suhu berat atau ruang menipis. Rekaman ditahan sebagai berkas sementara sampai pemeriksaan dan publikasi selesai.
 

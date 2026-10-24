@@ -5,3 +5,6 @@ local.properties
 *.keystore
 .idea/
 *.iml
+
+**/.cxx/
+__pycache__/

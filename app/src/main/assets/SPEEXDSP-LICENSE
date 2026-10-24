@@ -1,0 +1,799 @@
+Copyright 2002-2008 	Xiph.org Foundation
+Copyright 2002-2008 	Jean-Marc Valin
+Copyright 2005-2007	Analog Devices Inc.
+Copyright 2005-2008	Commonwealth Scientific and Industrial Research
+                        Organisation (CSIRO)
+Copyright 1993, 2002, 2006 David Rowe
+Copyright 2003 		EpicGames
+Copyright 1992-1994	Jutta Degener, Carsten Bormann
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+include/speex/speex_echo.h
+/* Copyright (C) Jean-Marc Valin */
+/**
+   @file speex_echo.h
+   @brief Echo cancellation
+*/
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are
+   met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+   IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+   INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifndef SPEEX_ECHO_H
+#define SPEEX_ECHO_H
+/** @defgroup SpeexEchoState SpeexEchoState: Acoustic echo canceller
+ *  This is the acoustic echo canceller module.
+ *  @{
+ */
+
+
+include/speex/speex_preprocess.h
+/* Copyright (C) 2003 Epic Games
+   Written by Jean-Marc Valin */
+/**
+ *  @file speex_preprocess.h
+ *  @brief Speex preprocessor. The preprocess can do noise suppression,
+ * residual echo suppression (after using the echo canceller), automatic
+ * gain control (AGC) and voice activity detection (VAD).
+*/
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are
+   met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+   IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+   INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifndef SPEEX_PREPROCESS_H
+#define SPEEX_PREPROCESS_H
+/** @defgroup SpeexPreprocessState SpeexPreprocessState: The Speex preprocessor
+ *  This is the Speex preprocessor. The preprocess can do noise suppression,
+ * residual echo suppression (after using the echo canceller), automatic
+ * gain control (AGC) and voice activity detection (VAD).
+ *  @{
+ */
+
+
+
+include/speex/speexdsp_config_types.h
+/* Cherry build configuration: fixed-width standard C types. */
+#ifndef __SPEEX_TYPES_H__
+#define __SPEEX_TYPES_H__
+
+
+include/speex/speexdsp_types.h
+/* speexdsp_types.h taken from libogg */
+/********************************************************************
+ *                                                                  *
+ * THIS FILE IS PART OF THE OggVorbis SOFTWARE CODEC SOURCE CODE.   *
+ * USE, DISTRIBUTION AND REPRODUCTION OF THIS LIBRARY SOURCE IS     *
+ * GOVERNED BY A BSD-STYLE SOURCE LICENSE INCLUDED WITH THIS SOURCE *
+ * IN 'COPYING'. PLEASE READ THESE TERMS BEFORE DISTRIBUTING.       *
+ *                                                                  *
+ * THE OggVorbis SOURCE CODE IS (C) COPYRIGHT 1994-2002             *
+ * by the Xiph.Org Foundation http://www.xiph.org/                  *
+ *                                                                  *
+ ********************************************************************
+
+ function: #ifdef jail to whip a few platforms into the UNIX ideal.
+ last mod: $Id: os_types.h 7524 2004-08-11 04:20:36Z conrad $
+
+ ********************************************************************/
+/**
+   @file speexdsp_types.h
+   @brief Speex types
+*/
+#ifndef _SPEEX_TYPES_H
+#define _SPEEX_TYPES_H
+
+#if defined(_WIN32)
+
+#  if defined(__CYGWIN__)
+#    include <_G_config.h>
+     typedef _G_int32_t spx_int32_t;
+     typedef _G_uint32_t spx_uint32_t;
+     typedef _G_int16_t spx_int16_t;
+     typedef _G_uint16_t spx_uint16_t;
+#  elif defined(__MINGW32__)
+     typedef short spx_int16_t;
+     typedef unsigned short spx_uint16_t;
+     typedef int spx_int32_t;
+     typedef unsigned int spx_uint32_t;
+#  elif defined(__MWERKS__)
+     typedef int spx_int32_t;
+     typedef unsigned int spx_uint32_t;
+     typedef short spx_int16_t;
+     typedef unsigned short spx_uint16_t;
+#  else
+     /* MSVC/Borland */
+     typedef __int32 spx_int32_t;
+     typedef unsigned __int32 spx_uint32_t;
+     typedef __int16 spx_int16_t;
+     typedef unsigned __int16 spx_uint16_t;
+#  endif
+
+#elif defined(__MACOS__)
+
+#  include <sys/types.h>
+   typedef SInt16 spx_int16_t;
+   typedef UInt16 spx_uint16_t;
+   typedef SInt32 spx_int32_t;
+   typedef UInt32 spx_uint32_t;
+
+#elif (defined(__APPLE__) && defined(__MACH__)) /* MacOS X Framework build */
+
+#  include <sys/types.h>
+   typedef int16_t spx_int16_t;
+   typedef u_int16_t spx_uint16_t;
+   typedef int32_t spx_int32_t;
+   typedef u_int32_t spx_uint32_t;
+
+#elif defined(__BEOS__)
+
+   /* Be */
+#  include <inttypes.h>
+   typedef int16_t spx_int16_t;
+   typedef u_int16_t spx_uint16_t;
+   typedef int32_t spx_int32_t;
+   typedef u_int32_t spx_uint32_t;
+
+#elif defined (__EMX__)
+
+   /* OS/2 GCC */
+   typedef short spx_int16_t;
+   typedef unsigned short spx_uint16_t;
+   typedef int spx_int32_t;
+   typedef unsigned int spx_uint32_t;
+
+#elif defined (DJGPP)
+
+   /* DJGPP */
+   typedef short spx_int16_t;
+   typedef int spx_int32_t;
+   typedef unsigned int spx_uint32_t;
+
+#elif defined(R5900)
+
+   /* PS2 EE */
+   typedef int spx_int32_t;
+   typedef unsigned spx_uint32_t;
+   typedef short spx_int16_t;
+
+#elif defined(__SYMBIAN32__)
+
+   /* Symbian GCC */
+   typedef signed short spx_int16_t;
+   typedef unsigned short spx_uint16_t;
+   typedef signed int spx_int32_t;
+   typedef unsigned int spx_uint32_t;
+
+#elif defined(CONFIG_TI_C54X) || defined (CONFIG_TI_C55X)
+
+   typedef short spx_int16_t;
+   typedef unsigned short spx_uint16_t;
+   typedef long spx_int32_t;
+   typedef unsigned long spx_uint32_t;
+
+#elif defined(CONFIG_TI_C6X)
+
+   typedef short spx_int16_t;
+   typedef unsigned short spx_uint16_t;
+   typedef int spx_int32_t;
+   typedef unsigned int spx_uint32_t;
+
+#else
+
+
+
+libspeexdsp/arch.h
+/* Copyright (C) 2003 Jean-Marc Valin */
+/**
+   @file arch.h
+   @brief Various architecture definitions Speex
+*/
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   - Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+   - Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   - Neither the name of the Xiph.org Foundation nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifndef ARCH_H
+#define ARCH_H
+
+/* A couple test to catch stupid option combinations */
+#ifdef FIXED_POINT
+
+#ifdef FLOATING_POINT
+#error You cannot compile as floating point and fixed point at the same time
+#endif
+#ifdef USE_SSE
+#error SSE is only for floating-point
+#endif
+#if defined(ARM4_ASM) + defined(ARM5E_ASM) + defined(BFIN_ASM) > 1
+#error Make up your mind. What CPU do you have?
+#endif
+#ifdef VORBIS_PSYCHO
+#error Vorbis-psy model currently not implemented in fixed-point
+#endif
+
+#else
+
+#ifndef FLOATING_POINT
+#error You now need to define either FIXED_POINT or FLOATING_POINT
+#endif
+#if defined(ARM4_ASM) || defined(ARM5E_ASM) || defined(BFIN_ASM)
+#error I suppose you can have a [ARM4/ARM5E/Blackfin] that has float instructions?
+#endif
+#ifdef FIXED_DEBUG
+#error "Don't you think enabling fixed-point is a good thing to do if you want to debug that?"
+#endif
+
+
+#endif
+
+#ifndef OUTSIDE_SPEEX
+
+
+libspeexdsp/fftwrap.c
+/* Copyright (C) 2005-2006 Jean-Marc Valin
+   File: fftwrap.c
+
+   Wrapper for various FFTs
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   - Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+   - Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   - Neither the name of the Xiph.org Foundation nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+*/
+
+#ifdef HAVE_CONFIG_H
+
+
+libspeexdsp/fftwrap.h
+/* Copyright (C) 2005 Jean-Marc Valin
+   File: fftwrap.h
+
+   Wrapper for various FFTs
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   - Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+   - Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   - Neither the name of the Xiph.org Foundation nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+*/
+
+#ifndef FFTWRAP_H
+#define FFTWRAP_H
+
+
+
+libspeexdsp/filterbank.c
+/* Copyright (C) 2006 Jean-Marc Valin */
+/**
+   @file filterbank.c
+   @brief Converting between psd and filterbank
+ */
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are
+   met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+   IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+   INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifdef HAVE_CONFIG_H
+
+
+libspeexdsp/filterbank.h
+/* Copyright (C) 2006 Jean-Marc Valin */
+/**
+   @file filterbank.h
+   @brief Converting between psd and filterbank
+ */
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are
+   met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+   IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+   INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifndef FILTERBANK_H
+#define FILTERBANK_H
+
+
+
+libspeexdsp/math_approx.h
+/* Copyright (C) 2002 Jean-Marc Valin */
+/**
+   @file math_approx.h
+   @brief Various math approximation functions for Speex
+*/
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   - Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+   - Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   - Neither the name of the Xiph.org Foundation nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifndef MATH_APPROX_H
+#define MATH_APPROX_H
+
+
+
+libspeexdsp/mdf.c
+/* Copyright (C) 2003-2008 Jean-Marc Valin
+
+   File: mdf.c
+   Echo canceller based on the MDF algorithm (see below)
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are
+   met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+   IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+   INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGE.
+*/
+
+/*
+   The echo canceller is based on the MDF algorithm described in:
+
+   J. S. Soo, K. K. Pang Multidelay block frequency adaptive filter,
+   IEEE Trans. Acoust. Speech Signal Process., Vol. ASSP-38, No. 2,
+   February 1990.
+
+   We use the Alternatively Updated MDF (AUMDF) variant. Robustness to
+   double-talk is achieved using a variable learning rate as described in:
+
+   Valin, J.-M., On Adjusting the Learning Rate in Frequency Domain Echo
+   Cancellation With Double-Talk. IEEE Transactions on Audio,
+   Speech and Language Processing, Vol. 15, No. 3, pp. 1030-1034, 2007.
+   http://people.xiph.org/~jm/papers/valin_taslp2006.pdf
+
+   There is no explicit double-talk detection, but a continuous variation
+   in the learning rate based on residual echo, double-talk and background
+   noise.
+
+   About the fixed-point version:
+   All the signals are represented with 16-bit words. The filter weights
+   are represented with 32-bit words, but only the top 16 bits are used
+   in most cases. The lower 16 bits are completely unreliable (due to the
+   fact that the update is done only on the top bits), but help in the
+   adaptation -- probably by removing a "threshold effect" due to
+   quantization (rounding going to zero) when the gradient is small.
+
+   Another kludge that seems to work good: when performing the weight
+   update, we only move half the way toward the "goal" this seems to
+   reduce the effect of quantization noise in the update phase. This
+   can be seen as applying a gradient descent on a "soft constraint"
+   instead of having a hard constraint.
+
+*/
+
+#ifdef HAVE_CONFIG_H
+
+
+libspeexdsp/os_support.h
+/* Copyright (C) 2007 Jean-Marc Valin
+
+   File: os_support.h
+   This is the (tiny) OS abstraction layer. Aside from math.h, this is the
+   only place where system headers are allowed.
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are
+   met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+   IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+   INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifndef OS_SUPPORT_H
+#define OS_SUPPORT_H
+
+
+
+libspeexdsp/preprocess.c
+/* Copyright (C) 2003 Epic Games (written by Jean-Marc Valin)
+   Copyright (C) 2004-2006 Epic Games
+
+   File: preprocess.c
+   Preprocessor with denoising based on the algorithm by Ephraim and Malah
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are
+   met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+   IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+   INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGE.
+*/
+
+
+/*
+   Recommended papers:
+
+   Y. Ephraim and D. Malah, "Speech enhancement using minimum mean-square error
+   short-time spectral amplitude estimator". IEEE Transactions on Acoustics,
+   Speech and Signal Processing, vol. ASSP-32, no. 6, pp. 1109-1121, 1984.
+
+   Y. Ephraim and D. Malah, "Speech enhancement using minimum mean-square error
+   log-spectral amplitude estimator". IEEE Transactions on Acoustics, Speech and
+   Signal Processing, vol. ASSP-33, no. 2, pp. 443-445, 1985.
+
+   I. Cohen and B. Berdugo, "Speech enhancement for non-stationary noise environments".
+   Signal Processing, vol. 81, no. 2, pp. 2403-2418, 2001.
+
+   Stefan Gustafsson, Rainer Martin, Peter Jax, and Peter Vary. "A psychoacoustic
+   approach to combined acoustic echo cancellation and noise reduction". IEEE
+   Transactions on Speech and Audio Processing, 2002.
+
+   J.-M. Valin, J. Rouat, and F. Michaud, "Microphone array post-filter for separation
+   of simultaneous non-stationary sources". In Proceedings IEEE International
+   Conference on Acoustics, Speech, and Signal Processing, 2004.
+*/
+
+#ifdef HAVE_CONFIG_H
+
+
+libspeexdsp/pseudofloat.h
+/* Copyright (C) 2005 Jean-Marc Valin */
+/**
+   @file pseudofloat.h
+   @brief Pseudo-floating point
+ * This header file provides a lightweight floating point type for
+ * use on fixed-point platforms when a large dynamic range is
+ * required. The new type is not compatible with the 32-bit IEEE format,
+ * it is not even remotely as accurate as 32-bit floats, and is not
+ * even guaranteed to produce even remotely correct results for code
+ * other than Speex. It makes all kinds of shortcuts that are acceptable
+ * for Speex, but may not be acceptable for your application. You're
+ * quite welcome to reuse this code and improve it, but don't assume
+ * it works out of the box. Most likely, it doesn't.
+ */
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   - Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+   - Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   - Neither the name of the Xiph.org Foundation nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifndef PSEUDOFLOAT_H
+#define PSEUDOFLOAT_H
+
+
+
+libspeexdsp/smallft.c
+/********************************************************************
+ *                                                                  *
+ * THIS FILE IS PART OF THE OggVorbis SOFTWARE CODEC SOURCE CODE.   *
+ * USE, DISTRIBUTION AND REPRODUCTION OF THIS LIBRARY SOURCE IS     *
+ * GOVERNED BY A BSD-STYLE SOURCE LICENSE INCLUDED WITH THIS SOURCE *
+ * IN 'COPYING'. PLEASE READ THESE TERMS BEFORE DISTRIBUTING.       *
+ *                                                                  *
+ * THE OggVorbis SOURCE CODE IS (C) COPYRIGHT 1994-2001             *
+ * by the XIPHOPHORUS Company http://www.xiph.org/                  *
+ *                                                                  *
+ ********************************************************************
+
+ function: *unnormalized* fft transform
+ last mod: $Id: smallft.c,v 1.19 2003/10/08 05:12:37 jm Exp $
+
+ ********************************************************************/
+
+/* FFT implementation from OggSquish, minus cosine transforms,
+ * minus all but radix 2/4 case.  In Vorbis we only need this
+ * cut-down version.
+ *
+ * To do more than just power-of-two sized vectors, see the full
+ * version I wrote for NetLib.
+ *
+ * Note that the packing is a little strange; rather than the FFT r/i
+ * packing following R_0, I_n, R_1, I_1, R_2, I_2 ... R_n-1, I_n-1,
+ * it follows R_0, R_1, I_1, R_2, I_2 ... R_n-1, I_n-1, I_n like the
+ * FORTRAN version
+ */
+
+#ifdef HAVE_CONFIG_H
+
+
+libspeexdsp/smallft.h
+/********************************************************************
+ *                                                                  *
+ * THIS FILE IS PART OF THE OggVorbis SOFTWARE CODEC SOURCE CODE.   *
+ * USE, DISTRIBUTION AND REPRODUCTION OF THIS LIBRARY SOURCE IS     *
+ * GOVERNED BY A BSD-STYLE SOURCE LICENSE INCLUDED WITH THIS SOURCE *
+ * IN 'COPYING'. PLEASE READ THESE TERMS BEFORE DISTRIBUTING.       *
+ *                                                                  *
+ * THE OggVorbis SOURCE CODE IS (C) COPYRIGHT 1994-2001             *
+ * by the XIPHOPHORUS Company http://www.xiph.org/                  *
+ *                                                                  *
+ ********************************************************************
+
+ function: fft transform
+ last mod: $Id: smallft.h,v 1.3 2003/09/16 18:35:45 jm Exp $
+
+ ********************************************************************/
+/**
+   @file smallft.h
+   @brief Discrete Rotational Fourier Transform (DRFT)
+*/
+

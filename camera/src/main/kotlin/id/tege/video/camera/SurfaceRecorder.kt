@@ -3,8 +3,11 @@ package id.tege.video.camera
 import android.annotation.SuppressLint
 import android.content.Context
 import android.media.*
+import android.media.audiofx.NoiseSuppressor
+import android.media.audiofx.AutomaticGainControl
 import android.os.Process
 import android.view.Surface
+import id.tege.video.core.AudioMode
 import id.tege.video.core.VideoProfile
 import id.tege.video.core.AudioFrameClock
 import id.tege.video.core.RecordingStart
@@ -31,10 +34,33 @@ class SurfaceRecorder(
     private val maxBytes: Long,
     private val onLimit: () -> Unit,
     private val onFailure: (String) -> Unit,
+    private val audioMode: AudioMode = AudioMode.NATURAL,
+    private val audioDeviceId: Int = 0,
 ) {
     private var video: MediaCodec?=null
     private var audio: MediaCodec?=null
     private var microphone: AudioRecord?=null
+    private var route: AudioRoute?=null
+    private var processor: AudioProcessor?=null
+    private var systemNs: NoiseSuppressor?=null
+    private var systemAgc: AutomaticGainControl?=null
+    @Volatile private var actualInput=JSONObject()
+    private var microphoneInfo=org.json.JSONArray()
+    private var nsState="unavailable"
+    private var agcState="unavailable"
+    private val inputSquares=DoubleArray(2)
+    private val outputSquares=DoubleArray(2)
+    private var inputMeterFrames=0L
+    private var outputMeterFrames=0L
+    private fun meter(buffer: ByteBuffer,frames: Int,squares: DoubleArray) {
+        for(i in 0 until frames) for(c in 0 until channels) {
+            val sample=buffer.getShort((i*channels+c)*2).toDouble()/32768.0
+            squares[c]+=sample*sample
+        }
+    }
+    private fun levels(squares: DoubleArray,frames: Long)=org.json.JSONArray((0 until channels).map {
+        if(frames==0L) -120.0 else 10*kotlin.math.log10((squares[it]/frames).coerceAtLeast(1e-12))
+    })
     private var muxer: MediaMuxer?=null
     lateinit var surface: Surface; private set
     private var drainThread: Thread?=null
@@ -55,6 +81,12 @@ class SurfaceRecorder(
         .put("firstVideoOutputUs",startup.firstVideoUs ?: JSONObject.NULL)
         .put("firstAudioOutputUs",startup.firstAudioUs ?: JSONObject.NULL)
         .put("startupTrimUs",startup.originUs ?: JSONObject.NULL)
+        .put("audioMode",audioMode.name).put("audioModeLabel",audioMode.label)
+        .put("processor",if(audioMode==AudioMode.NATURAL) "Bypass tambahan aplikasi" else "SpeexDSP")
+        .put("maxNoiseAttenuationDb",audioMode.attenuationDb).put("processorLatencyUs",audioMode.latencyUs)
+        .put("channels",channels).put("sampleRate",48000).put("actualInput",actualInput)
+        .put("activeMicrophones",microphoneInfo).put("systemNoiseSuppressor",nsState).put("systemAutomaticGainControl",agcState)
+        .put("inputRmsDbfs",levels(inputSquares,inputMeterFrames)).put("outputRmsDbfs",levels(outputSquares,outputMeterFrames))
     private var channels=2
     private var started=false
     private var stopped=false
@@ -77,17 +109,20 @@ class SurfaceRecorder(
                 surface=createInputSurface()
             }
             if(audioSource!=0) {
+                route=AudioRoute(context,audioSource==2,audioDeviceId)
+                route!!.prepare()
                 microphone=runCatching { makeMicrophone(2) }.getOrNull()
                 if(microphone?.state!=AudioRecord.STATE_INITIALIZED) {
                     microphone?.release();channels=1;microphone=makeMicrophone(1)
                 }
                 check(microphone?.state==AudioRecord.STATE_INITIALIZED) { "Mikrofon tidak dapat dibuka." }
-                if(audioSource==2) {
-                    val external=context.getSystemService(AudioManager::class.java).getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull {
-                        it.type in setOf(AudioDeviceInfo.TYPE_USB_DEVICE,AudioDeviceInfo.TYPE_USB_HEADSET,AudioDeviceInfo.TYPE_WIRED_HEADSET)
-                    }
-                    check(external!=null && microphone!!.setPreferredDevice(external)) { "Mikrofon kabel/USB tidak tersedia atau ditolak." }
-                }
+                route!!.apply(microphone!!)
+                processor=AudioProcessor(audioMode,channels)
+                // Avoid stacking OEM gain/noise effects over the selected application processor.
+                systemNs=runCatching { if(NoiseSuppressor.isAvailable()) NoiseSuppressor.create(microphone!!.audioSessionId) else null }.getOrNull()
+                systemAgc=runCatching { if(AutomaticGainControl.isAvailable()) AutomaticGainControl.create(microphone!!.audioSessionId) else null }.getOrNull()
+                systemNs?.let { nsState=runCatching { it.enabled=false;if(it.enabled) "tetap aktif (sistem)" else "nonaktif" }.getOrDefault("tidak dapat dikendalikan") }
+                systemAgc?.let { agcState=runCatching { it.enabled=false;if(it.enabled) "tetap aktif (sistem)" else "nonaktif" }.getOrDefault("tidak dapat dikendalikan") }
                 audio=MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC).also { audio=it }.apply {
                     configure(MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC,48_000,channels).apply {
                         setInteger(MediaFormat.KEY_AAC_PROFILE,MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -103,7 +138,7 @@ class SurfaceRecorder(
         val mask=if(count==2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
         val minimum=AudioRecord.getMinBufferSize(48_000,mask,AudioFormat.ENCODING_PCM_16BIT)
         check(minimum>0) { "Format mikrofon tidak didukung." }
-        return AudioRecord(if(audioSource==2) MediaRecorder.AudioSource.MIC else MediaRecorder.AudioSource.CAMCORDER,
+        return AudioRecord(route?.source ?: MediaRecorder.AudioSource.CAMCORDER,
             48_000,mask,AudioFormat.ENCODING_PCM_16BIT,max(minimum*4,48_000*count*2/5))
     }
     fun start() {
@@ -127,42 +162,77 @@ class SurfaceRecorder(
         val clock=AudioFrameClock()
         val timestamp=AudioTimestamp()
         var clockReady=false
+        var routeVerified=false
+        var routedDeviceId: Int?=null
         try {
             while(capturing) {
                 val index=codec.dequeueInputBuffer(10_000)
                 if(index<0) continue
                 val buffer=checkNotNull(codec.getInputBuffer(index)).apply { clear();order(ByteOrder.LITTLE_ENDIAN) }
-                val requested=minOf(buffer.remaining(),4096*channels).let { it-it%(channels*2) }
-                val count=input.read(buffer,requested,AudioRecord.READ_BLOCKING)
-                if(count<=0) {
-                    if(capturing) error("Mikrofon berhenti mengirim data: $count")
-                    codec.queueInputBuffer(index,0,0,nextUs,MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                    return
+                val requested=AudioProcessor.FRAME*channels*2
+                check(buffer.capacity()>=requested)
+                var count=0
+                while(count<requested) {
+                    val destination=buffer.duplicate().apply { position(count);limit(requested) }.slice()
+                    val read=input.read(destination,requested-count,AudioRecord.READ_BLOCKING)
+                    if(read<=0) {
+                        if(capturing) error("Mikrofon berhenti mengirim data: $read")
+                        break
+                    }
+                    count+=read
+                    if(!capturing) break
+                }
+                if(count<=0) { codec.queueInputBuffer(index,0,0,nextUs,0);break }
+                check(count%(channels*2)==0) { "PCM mikrofon tidak utuh." }
+                if(!routeVerified || input.routedDevice?.id!=routedDeviceId) {
+                    route!!.verify(input.routedDevice);actualInput=AudioInputs.report(input.routedDevice)
+                    microphoneInfo=runCatching { org.json.JSONArray(input.activeMicrophones.map { m ->
+                        JSONObject().put("id",m.id).put("description",m.description).put("type",m.type)
+                    }) }.getOrDefault(org.json.JSONArray())
+                    routedDeviceId=input.routedDevice?.id;routeVerified=true
                 }
                 var amplitude=0
                 for(i in 0 until count-1 step 2) amplitude=max(amplitude,abs(buffer.getShort(i).toInt()))
                 peak=amplitude
-                val frameCount=count/(channels*2)
+                val captured=count/(channels*2)
+                meter(buffer,captured,inputSquares);inputMeterFrames+=captured
+                val frameCount=if(audioMode==AudioMode.NATURAL) captured else AudioProcessor.FRAME
                 if(!clockReady) {
                     if(input.getTimestamp(timestamp,AudioTimestamp.TIMEBASE_MONOTONIC)==AudioRecord.SUCCESS && timestamp.nanoTime>0 && timestamp.framePosition>0) {
                         clock.anchor(timestamp.framePosition,timestamp.nanoTime);audioClockSource="AudioRecord MONOTONIC"
                     } else {
                         // Older HALs may not supply a timestamp yet. Approximate the end of
                         // the first blocking read, never the return time of startRecording().
-                        clock.anchor(frames+frameCount,System.nanoTime());audioClockSource="first PCM read completion"
+                        clock.anchor(frames+captured,System.nanoTime());audioClockSource="first PCM read completion"
                     }
                     clockReady=true
                 }
-                val pts=clock.timeUs(frames,epochNs)
+                processor!!.process(buffer,captured)
+                meter(buffer,frameCount,outputSquares);outputMeterFrames+=frameCount
+                val pts=clock.timeUs(frames,epochNs)-audioMode.latencyUs
                 if(firstAudioInputUs==null) firstAudioInputUs=pts
                 // Trim PCM preceding the shared epoch before AAC encoding, not by
                 // dropping arbitrary encoded video frames (which can lose the first IDR).
                 val skip=if(pts<0) minOf(frameCount,((-pts*48_000+999_999)/1_000_000).toInt()) else 0
                 val offset=skip*channels*2
-                val kept=count-offset
-                val queuedUs=clock.timeUs(frames+skip,epochNs).coerceAtLeast(0L)
+                val kept=frameCount*channels*2-offset
+                val queuedUs=(clock.timeUs(frames+skip,epochNs)-audioMode.latencyUs).coerceAtLeast(0L)
                 codec.queueInputBuffer(index,offset,kept,queuedUs,0)
-                frames+=frameCount;capturedAudioFrames=frames;nextUs=clock.timeUs(frames,epochNs).coerceAtLeast(0L)
+                frames+=frameCount;capturedAudioFrames+=captured;nextUs=(clock.timeUs(frames,epochNs)-audioMode.latencyUs).coerceAtLeast(0L)
+            }
+            // Speex returns the previous 10ms window. Flush that tail before AAC EOS,
+            // with timestamp compensation, rather than silently cutting the last syllable.
+            if(audioMode!=AudioMode.NATURAL && frames>0) {
+                val deadline=System.nanoTime()+3_000_000_000L
+                var index=-1
+                while(index<0 && System.nanoTime()<deadline) index=codec.dequeueInputBuffer(10_000)
+                check(index>=0) { "Audio tail tidak tersedia." }
+                val buffer=checkNotNull(codec.getInputBuffer(index)).apply { clear();order(ByteOrder.LITTLE_ENDIAN) }
+                repeat(AudioProcessor.FRAME*channels*2) { buffer.put(it,0) }
+                processor!!.process(buffer,AudioProcessor.FRAME)
+                meter(buffer,AudioProcessor.FRAME,outputSquares);outputMeterFrames+=AudioProcessor.FRAME
+                codec.queueInputBuffer(index,0,AudioProcessor.FRAME*channels*2,nextUs,0)
+                nextUs=(clock.timeUs(frames,epochNs)).coerceAtLeast(0L)
             }
             val deadline=System.nanoTime()+3_000_000_000L
             while(System.nanoTime()<deadline) {
@@ -252,7 +322,11 @@ class SurfaceRecorder(
         capturing=false;runCatching { microphone?.stop() }
         audioThread?.join(4_000)
         draining=false;drainThread?.join(4_000)
+        runCatching { processor?.close() };processor=null
+        runCatching { systemNs?.release() };systemNs=null
+        runCatching { systemAgc?.release() };systemAgc=null
         runCatching { microphone?.release() };microphone=null
+        runCatching { route?.close() };route=null
         listOfNotNull(video,audio).forEach { runCatching { it.stop() };runCatching { it.release() } }
         video=null;audio=null
         runCatching { muxer?.release() };muxer=null

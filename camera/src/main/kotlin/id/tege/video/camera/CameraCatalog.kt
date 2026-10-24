@@ -2,6 +2,8 @@ package id.tege.video.camera
 
 import android.content.Context
 import android.graphics.SurfaceTexture
+import android.os.Build
+import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CameraCharacteristics as C
 import android.hardware.camera2.CameraManager
 import android.media.MediaCodecInfo
@@ -13,7 +15,19 @@ import id.tege.video.core.VideoProfile
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class CameraEntry(val id: String, val label: String, val characteristics: C) {
+data class CameraEntry(val id: String, val label: String, val characteristics: C,
+    val logicalId: String?=null, val logicalCharacteristics: C?=null) {
+    val openId: String get()=logicalId ?: id
+    val selectionKey: String get()="$openId/$id"
+    val physical: Boolean get()=logicalId!=null
+    val physicalCrop: Boolean get()=physical && logicalCharacteristics?.availablePhysicalCameraRequestKeys?.contains(CaptureRequest.SCALER_CROP_REGION)==true
+    val ratioZoom: Boolean get()= !physical && Build.VERSION.SDK_INT>=30 && characteristics[C.CONTROL_ZOOM_RATIO_RANGE]!=null
+    val zoomMin: Float get()=if(ratioZoom) characteristics[C.CONTROL_ZOOM_RATIO_RANGE]!!.lower else 1f
+    val zoomMax: Float get()=if(physical && !physicalCrop) 1f else if(ratioZoom) characteristics[C.CONTROL_ZOOM_RATIO_RANGE]!!.upper
+        else (characteristics[C.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM] ?: 1f).coerceAtLeast(1f)
+    val equivalentFocal: Float get()=(characteristics[C.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]?.minOrNull() ?: 0f) /
+        (characteristics[C.SENSOR_INFO_PHYSICAL_SIZE]?.width ?: 1f).coerceAtLeast(.001f)
+
     val front: Boolean get() = characteristics[C.LENS_FACING] == C.LENS_FACING_FRONT
     val rotation: Int get() = characteristics[C.SENSOR_ORIENTATION] ?: 90
     val minFocus: Float get() = characteristics[C.LENS_INFO_MINIMUM_FOCUS_DISTANCE] ?: 0f
@@ -23,6 +37,7 @@ data class CameraEntry(val id: String, val label: String, val characteristics: C
     val ranges: List<Range<Int>> get() = characteristics[C.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES]?.toList().orEmpty()
     fun range(fps: Int): Range<Int>? = ranges.filter { it.upper == fps }.minByOrNull { it.upper - it.lower }
     fun highSpeedRates(width: Int, height: Int): List<Int> = runCatching {
+        if(physical) return@runCatching emptyList()
         val map=characteristics[C.SCALER_STREAM_CONFIGURATION_MAP] ?: return@runCatching emptyList()
         if(characteristics[C.REQUEST_AVAILABLE_CAPABILITIES]?.contains(C.REQUEST_AVAILABLE_CAPABILITIES_CONSTRAINED_HIGH_SPEED_VIDEO)!=true) return@runCatching emptyList()
         map.getHighSpeedVideoFpsRangesFor(Size(width,height)).filter { it.lower==it.upper && it.upper>=120 && it.upper%60==0 }.map { it.upper }.sorted()
@@ -41,6 +56,8 @@ data class CameraEntry(val id: String, val label: String, val characteristics: C
             .sortedWith(compareBy<VideoProfile> { if(it.height==1080) 0 else if(it.width>=3840) 1 else 2 }.thenBy { it.fps })
     }
     fun report(): JSONObject = JSONObject().put("id",id).put("label",label).put("front",front)
+        .put("logicalId",logicalId ?: JSONObject.NULL).put("openId",openId).put("physicalSelection",physical)
+        .put("zoomMin",zoomMin.toDouble()).put("zoomMax",zoomMax.toDouble()).put("zoomMethod",if(ratioZoom) "ratio" else if(physical && !physicalCrop) "fixed lens" else "crop")
         .put("sensorRotation",rotation).put("minFocusDiopter",minFocus.toDouble()).put("manualSensor",manual)
         .put("ois",ois).put("eis",eis).put("timestampSource",characteristics[C.SENSOR_INFO_TIMESTAMP_SOURCE])
         .put("normalAeRanges",JSONArray(ranges.map { listOf(it.lower,it.upper) }))
@@ -70,11 +87,24 @@ object CameraCatalog {
     }
     fun list(context: Context): List<CameraEntry> {
         val manager=context.getSystemService(CameraManager::class.java)
-        return manager.cameraIdList.mapNotNull { id -> runCatching {
-            val c=manager.getCameraCharacteristics(id)
-            val facing=if(c[C.LENS_FACING]==C.LENS_FACING_FRONT) "Depan" else "Belakang"
-            CameraEntry(id,"$facing · ID $id · ${c[C.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]?.firstOrNull() ?: "?"} mm",c)
-        }.getOrNull() }.sortedBy { if(it.id=="0") 0 else if(it.front) 2 else 1 }
+        val public=manager.cameraIdList.mapNotNull { id -> runCatching {
+            CameraEntry(id,"Kamera $id",manager.getCameraCharacteristics(id))
+        }.getOrNull() }
+        val physical=public.filter { !it.front }.flatMap { parent ->
+            parent.characteristics.physicalCameraIds.filter { id -> public.none { it.id==id } }.mapNotNull { id ->
+                runCatching { CameraEntry(id,"Lensa $id",manager.getCameraCharacteristics(id),parent.id,parent.characteristics) }
+                    .getOrNull()?.takeIf { it.profiles(false).isNotEmpty() || it.profiles(true).isNotEmpty() }
+            }
+        }.distinctBy { it.id }
+        val main=public.firstOrNull { it.id=="0" && !it.front } ?: public.firstOrNull { !it.front }
+        val reference=main?.equivalentFocal?.takeIf { it>0 } ?: 1f
+        return (public+physical).map { camera ->
+            val ratio=camera.equivalentFocal/reference
+            val kind=if(camera.front) "Depan" else if(camera.id==main?.id) "Utama" else when {
+                camera.equivalentFocal<=0f->"Belakang";ratio<.85f->"Ultrawide";ratio>1.35f->"Telefoto";else->"Belakang"
+            }
+            camera.copy(label="$kind · ID ${camera.id}${if(camera.physical) " · fisik" else ""}")
+        }.sortedWith(compareBy<CameraEntry> { if(it.id==main?.id) 0 else if(it.front) 2 else 1 }.thenBy { it.equivalentFocal })
     }
 }
 

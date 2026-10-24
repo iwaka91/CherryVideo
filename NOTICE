@@ -11,3 +11,11 @@ finite output overshoot from -64 to 64 is retained for GPU grading and clamped a
 
 Gradle wrapper is distributed under Apache License 2.0.
 No GPL camera implementation or vendor camera binaries are included.
+
+SpeexDSP noise preprocessing subset, BSD 3-clause.
+Source: https://github.com/xiph/speexdsp
+Pinned revision: 7a158783df74efe7c2d1c6ee8363c1e695c71226
+Original source headers and COPYING retained under camera/src/main/cpp/speexdsp.
+Binary redistribution notices are included in app assets/SPEEXDSP-LICENSE.
+Cherry adds Android/JNI framing, independent channel state, two attenuation
+presets, explicit gain-control policy, and delay/tail compensation.
