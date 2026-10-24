@@ -1,0 +1,16 @@
+name: Correct 0.2.0 installation notes
+on:
+  push:
+    branches: [cherry-install-note-40099603607]
+permissions:
+  contents: write
+jobs:
+  correct_notes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish verified installation limitations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit test-19 --title "Cherry Video 0.2.0 beta · clean install required" --notes-file docs/RELEASE_NOTES.md
