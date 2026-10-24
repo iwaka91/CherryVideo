@@ -128,7 +128,7 @@ class VideoRenderer(
                 check(EGL14.eglSwapBuffers(display,encoder)) { "Encoder swap failed" }
                 renderedFrames++
             }
-        } catch(e: Exception) { onFailure("Render GPU: ${e.cause?.message ?: e.message}") }
+        } catch(e: Exception) { closed=true;onFailure("Render GPU: ${e.cause?.message ?: e.message}") }
     }
     private fun draw(surface: EGLSurface,w: Int,h: Int,isPreview: Boolean) {
         current(surface); GLES30.glViewport(0,0,w,h); GLES30.glClearColor(0f,0f,0f,1f); GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)

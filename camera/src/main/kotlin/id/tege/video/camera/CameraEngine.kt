@@ -88,7 +88,10 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 manager.openCamera(entry.id,object: CameraDevice.StateCallback() {
                     override fun onOpened(camera: CameraDevice) {
                         if(closing) { camera.close();return }
-                        device=camera;createSession()
+                        device=camera
+                        runCatching { createSession() }.onFailure { failure ->
+                            releaseCamera();error("Sesi kamera gagal: ${failure.message}")
+                        }
                     }
                     override fun onDisconnected(camera: CameraDevice) { if(isRecording) stopInternal();camera.close();isReady=false;error("Kamera terputus. Buka kembali aplikasi.") }
                     override fun onError(camera: CameraDevice,code: Int) { if(isRecording) stopInternal();camera.close();isReady=false;error("Camera2 error $code. Tutup aplikasi kamera lain, lalu coba kembali.") }
@@ -130,11 +133,12 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,entry.characteristics[C.CONTROL_AE_COMPENSATION_RANGE]?.clamp(controls.ev) ?: 0)
             if(entry.characteristics[C.CONTROL_AE_LOCK_AVAILABLE]==true) b.set(CaptureRequest.CONTROL_AE_LOCK,controls.aeLock)
         }
-        if(controls.focus!=null && entry.minFocus>0) {
+        val distance=controls.focus
+        if(distance!=null && entry.minFocus>0) {
             b.set(CaptureRequest.CONTROL_AF_MODE,CaptureRequest.CONTROL_AF_MODE_OFF)
-            b.set(CaptureRequest.LENS_FOCUS_DISTANCE,controls.focus.coerceIn(0f,entry.minFocus))
+            b.set(CaptureRequest.LENS_FOCUS_DISTANCE,distance.coerceIn(0f,entry.minFocus))
         } else {
-            val available=entry.characteristics[C.CONTROL_AF_AVAILABLE_MODES].orEmpty()
+            val available=entry.characteristics[C.CONTROL_AF_AVAILABLE_MODES] ?: intArrayOf()
             b.set(CaptureRequest.CONTROL_AF_MODE,if(available.contains(CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO else CaptureRequest.CONTROL_AF_MODE_OFF)
         }
         b.set(CaptureRequest.CONTROL_AWB_MODE,controls.wb)

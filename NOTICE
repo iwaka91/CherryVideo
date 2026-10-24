@@ -6,7 +6,8 @@ Copyright 2026 OpenCineCam contributors, Apache License 2.0.
 Source: https://github.com/LibreStatic/opencinecam
 Pinned revision: e8f063abdb97780cda2b0b17bbcf55eb07d2450a
 Changes: package relocation; Cube import accepts UTF-8 BOM and Unicode comments/titles;
-bounded parser input increased to support ordinary 33-cube commercial exports.
+bounded parser input increased to support ordinary 33-cube commercial exports;
+finite output overshoot from -64 to 64 is retained for GPU grading and clamped at final SDR output.
 
 Gradle wrapper is distributed under Apache License 2.0.
 No GPL camera implementation or vendor camera binaries are included.

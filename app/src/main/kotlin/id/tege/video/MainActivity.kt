@@ -408,7 +408,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun showWhiteBalance() {
         val c=cameras.getOrNull(cameraIndex) ?: return
         val panel=body()
-        val available=c.characteristics[C.CONTROL_AWB_AVAILABLE_MODES].orEmpty()
+        val available=c.characteristics[C.CONTROL_AWB_AVAILABLE_MODES] ?: intArrayOf()
         val options=listOf("Auto" to 1,"Siang" to 5,"Berawan" to 6,"Teduh" to 8,"Lampu pijar" to 2,"Fluoresen" to 3)
         options.filter { it.second in available }.forEach { (name,value) ->
             panel.addView(button(name,"wb-$value") { controls=controls.copy(wb=value,awbLock=false);engine?.update(controls);onStatus("White balance: $name") },LinearLayout.LayoutParams(-1,dp(44)).apply { bottomMargin=dp(4) })
