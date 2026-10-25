@@ -334,22 +334,30 @@ class QualificationTest {
         send(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),to,2)
         send(MotionEvent.ACTION_UP,to,1)
     }
+    /** The ratio the app itself shows (badge text such as "2.3×"); the emulated camera may not echo zoom in its results. */
+    private fun shownZoom(activity: MainActivity): Float {
+        var value=1f
+        instrumentation.runOnMainSync {
+            value=activity.window.decorView.findViewWithTag<android.widget.TextView>("zoom-badge").text.toString().replace("×","").trim().toFloatOrNull() ?: 1f
+        }
+        return value
+    }
     @Test fun twoFingerPinchZoomsThroughRealTouchDispatchAndKeepsRecording() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             lateinit var activity: MainActivity;scenario.onActivity { activity=it }
             await("Camera not ready: ${activity.engine?.lastError}") { activity.engine?.isReady==true }
             org.junit.Assume.assumeTrue("Emulated camera exposes no usable zoom range",activity.engine!!.entry.zoomMax>1.4f && !activity.engine!!.profile.highSpeed)
-            val start=activity.engine?.reportedZoom ?: 1f
+            val start=shownZoom(activity)
             pinch(scenario,true)
-            await("Spreading two fingers must zoom in",15000) { (activity.engine?.reportedZoom ?: 1f)>start+.15f }
-            val zoomedIn=activity.engine?.reportedZoom ?: 1f
+            await("Spreading two fingers must zoom in (start=$start shown=${shownZoom(activity)} reported=${activity.engine?.reportedZoom} max=${activity.engine?.entry?.zoomMax} busy=${activity.engine?.busy})",15000) { shownZoom(activity)>start+.15f }
+            val zoomedIn=shownZoom(activity)
             pinch(scenario,false)
-            await("Pinching two fingers together must zoom out",15000) { (activity.engine?.reportedZoom ?: 99f)<zoomedIn-.15f }
+            await("Pinching two fingers together must zoom out (zoomedIn=$zoomedIn shown=${shownZoom(activity)})",15000) { shownZoom(activity)<zoomedIn-.15f }
             tap(activity,"record")
             await("Recorder did not start") { activity.engine?.isRecording==true }
-            val before=activity.engine?.reportedZoom ?: 1f
+            val before=shownZoom(activity)
             pinch(scenario,true)
-            await("Zoom while recording must still change",15000) { (activity.engine?.reportedZoom ?: 1f)>before+.1f }
+            await("Zoom while recording must still change (before=$before shown=${shownZoom(activity)})",15000) { shownZoom(activity)>before+.1f }
             assertTrue("Zoom must not stop the recording",activity.engine?.isRecording==true)
             tap(activity,"record")
             await("No finalized video after zooming while recording") { activity.lastSaved!=null }
