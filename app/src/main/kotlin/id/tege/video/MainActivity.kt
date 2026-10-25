@@ -74,6 +74,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     @Volatile internal var touchEvents=0
     @Volatile internal var scaleBegins=0
     @Volatile internal var lastTouchPointers=0
+    @Volatile internal var maxTouchPointers=0
     private var controls=Controls()
     private var pro=false
     private var hevc=false
@@ -175,19 +176,25 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
         preview=SurfaceView(this).apply { holder.addCallback(this@MainActivity);tag="viewfinder" }
         var pinched=false
-        val pinch=ScaleGestureDetector(this,object: ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean { pinched=true;scaleBegins++;return true }
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                setZoom(controls.zoom*detector.scaleFactor);return true
-            }
-        })
-        // The preview must take the whole touch sequence from the first finger down. If the first finger is
-        // refused, Android never delivers the second finger to this view and the pinch is lost.
+        // Own two-finger handling (distance between the first two fingers) so zoom does not depend on the
+        // platform detector's minimum-span rules. The preview takes the whole touch sequence from the first finger
+        // down; if the first finger is refused, Android never delivers the second finger to this view.
+        var lastGap=0f
+        fun gapOf(event: MotionEvent): Float = if(event.pointerCount>=2) kotlin.math.hypot(event.getX(0)-event.getX(1),event.getY(0)-event.getY(1)) else 0f
         preview.setOnTouchListener { view,event ->
-            touchEvents++;lastTouchPointers=event.pointerCount
-            if(event.actionMasked==MotionEvent.ACTION_DOWN) pinched=false
-            pinch.onTouchEvent(event)
-            if(event.actionMasked==MotionEvent.ACTION_UP && !pinched) view.performClick()
+            touchEvents++;lastTouchPointers=event.pointerCount;if(event.pointerCount>maxTouchPointers) maxTouchPointers=event.pointerCount
+            when(event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { pinched=false;lastGap=0f }
+                MotionEvent.ACTION_POINTER_DOWN -> { pinched=true;lastGap=gapOf(event) }
+                MotionEvent.ACTION_POINTER_UP -> lastGap=0f
+                MotionEvent.ACTION_MOVE -> {
+                    val gap=gapOf(event)
+                    if(gap>0f && lastGap>0f && kotlin.math.abs(gap-lastGap)>=1f) { pinched=true;scaleBegins++;setZoom(controls.zoom*gap/lastGap);lastGap=gap }
+                    else if(gap>0f && lastGap==0f) lastGap=gap
+                }
+                MotionEvent.ACTION_UP -> { if(!pinched) view.performClick();lastGap=0f }
+                MotionEvent.ACTION_CANCEL -> lastGap=0f
+            }
             true
         }
         grid=GridOverlay(this)
