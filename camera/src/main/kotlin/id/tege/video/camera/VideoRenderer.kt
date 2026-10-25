@@ -292,6 +292,20 @@ class VideoRenderer(
                 else if(uLook==1){outRgb=pow(src,vec3(.98,1.01,1.04))*vec3(1.025,1.,.97);}
                 else if(uLook==2){float l=dot(src,vec3(.2126,.7152,.0722));outRgb=mix(vec3(l),src,.86)+vec3(-.012,.009,.015)*(1.-l);}
                 else if(uLook==3){outRgb=vec3(dot(src,vec3(.2126,.7152,.0722)));}
+                else if(uLook==4){
+                    float l=dot(src,vec3(.2126,.7152,.0722));
+                    vec3 c=mix(src,src*src*(3.-2.*src),.55);
+                    c+=vec3(-.02,.008,.03)*(1.-smoothstep(0.,.55,l));
+                    c+=vec3(.035,.012,-.03)*smoothstep(.45,1.,l);
+                    outRgb=mix(vec3(dot(c,vec3(.2126,.7152,.0722))),c,.92);
+                }
+                else if(uLook==5){
+                    float l=dot(src,vec3(.2126,.7152,.0722));
+                    vec3 c=mix(src,vec3(l),.22)*.92+.035;
+                    c*=vec3(1.03,1.,.96);
+                    c+=vec3(.012,.004,-.01)*smoothstep(.3,.9,l);
+                    outRgb=c;
+                }
                 color=vec4(clamp(mix(src,outRgb,uStrength),0.,1.),1.);
             }
         """.trimIndent()
