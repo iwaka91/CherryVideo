@@ -68,9 +68,22 @@ class QualificationTest {
             scenario.onActivity { activity=it }
             await("Camera not ready: ${activity.engine?.lastError}") { activity.engine?.isReady==true }
             screenshot("simple-portrait.png")
-            tap(activity,"mode")
-            scenario.onActivity { assertEquals(View.VISIBLE,it.window.decorView.findViewWithTag<Button>("focus").parent.let { parent -> (parent as View).visibility }) }
+            scenario.onActivity {
+                assertTrue("Simple must start active",it.window.decorView.findViewWithTag<Button>("mode-simple").isSelected)
+                assertFalse(it.window.decorView.findViewWithTag<Button>("mode-pro").isSelected)
+            }
+            tap(activity,"mode-pro")
+            tap(activity,"more")
+            scenario.onActivity {
+                val proRow=it.window.decorView.findViewWithTag<Button>("focus").parent.parent as View
+                assertEquals(View.VISIBLE,proRow.visibility)
+                assertTrue("Pro must be the active switch position",it.window.decorView.findViewWithTag<Button>("mode-pro").isSelected)
+                assertFalse(it.window.decorView.findViewWithTag<Button>("mode-simple").isSelected)
+                assertEquals(View.VISIBLE,it.window.decorView.findViewWithTag<View>("control-host").let { host -> (host as android.view.ViewGroup).getChildAt(0).visibility })
+            }
+            assertTrue("Pro mode must persist",context.getSharedPreferences("tege",0).getBoolean("pro",false))
             screenshot("pro-portrait.png")
+            tap(activity,"more")
             tap(activity,"record")
             await("Recorder did not start") { activity.engine?.isRecording==true }
             screenshot("recording.png")

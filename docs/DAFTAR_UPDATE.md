@@ -4,6 +4,13 @@ Tanggal keputusan: **25 Oktober 2026**. Basis pemeriksaan: **0.3.0-beta**, Xiaom
 
 Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplikasi di bawah belum diimplementasikan.** Pembuatan dokumen ini tidak menjadi perintah untuk langsung mengerjakan seluruh catatan. Baca ruang lingkup terbaru sebelum melanjutkan di sesi lain.
 
+## Status terbaru — 0.3.1-beta
+
+- **Selesai di kode (belum diuji di Xiaomi):** UI potret baru sesuai mockup ("Mockup Cherry Video", layar utama Simpel potret) dan sakelar **Simpel | Pro** (butir 2 di bawah). Mode dipilih dengan ketuk; geser tidak diwajibkan pengguna.
+- **Keputusan pengguna:** UI dirombak lebih dulu; perbaikan gestur zoom dua jari (butir 1) dikerjakan terpisah setelahnya, di UI baru. Keterangan saat profil membatasi zoom: teks singkat di layar.
+- **Belum dikerjakan:** butir 1 (gestur zoom). Laci Lainnya dan landscape belum punya mockup; tata letaknya mengikuti gaya layar utama.
+- Pengguna bersedia uninstall bila APK baru tidak bisa menimpa versi lama.
+
 ## Fokus update yang diminta
 
 ### 1. Perbaiki zoom dengan dua jari
@@ -21,10 +28,10 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 ### 2. Ubah kontrol Simpel | Pro
 
-- [ ] Ganti tombol tunggal `Simple`/`Pro` dengan sakelar dua posisi **Simpel | Pro**; kedua label selalu terlihat.
-- [ ] Pilihan **aktif hijau**, pilihan **tidak aktif abu-abu**, berlaku sama untuk kedua mode.
+- [x] Ganti tombol tunggal `Simple`/`Pro` dengan sakelar dua posisi **Simpel | Pro**; kedua label selalu terlihat.
+- [x] Pilihan **aktif hijau**, pilihan **tidak aktif abu-abu**, berlaku sama untuk kedua mode.
 - [ ] Posisi/penanda aktif mengikuti mode, dapat dipilih dengan mengetuk label, dan mendukung perpindahan bergeser sesuai desain sakelar.
-- [ ] Pertahankan preferensi mode tersimpan, pembatasan pergantian saat merekam, serta tampilan potret/landscape yang tidak menutupi kontrol penting.
+- [x] Pertahankan preferensi mode tersimpan, pembatasan pergantian saat merekam, serta tampilan potret/landscape yang tidak menutupi kontrol penting.
 
 **Koreksi keputusan lama:** warna biru untuk Pro dibatalkan. Keputusan terakhir pengguna adalah hijau untuk aktif dan abu-abu untuk tidak aktif.
 

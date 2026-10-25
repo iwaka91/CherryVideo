@@ -27,6 +27,8 @@ import kotlin.math.log10
 class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private val gold=Color.rgb(230,190,127)
     private val muted=Color.rgb(160,174,180)
+    private val green=Color.rgb(47,191,113)
+    private val surface=Color.rgb(34,42,47)
     private val main=Handler(Looper.getMainLooper())
     private val io=Executors.newSingleThreadExecutor()
     private val prefs by lazy { getSharedPreferences("tege",MODE_PRIVATE) }
@@ -34,7 +36,11 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private lateinit var status: TextView
     private lateinit var detail: TextView
     private lateinit var record: Button
-    private lateinit var mode: Button
+    private lateinit var modeSimple: Button
+    private lateinit var modePro: Button
+    private lateinit var moreButton: Button
+    private lateinit var zoomBadge: TextView
+    private var drawerOpen=false
     private lateinit var quality: Button
     private lateinit var colors: Button
     private lateinit var lens: Button
@@ -162,25 +168,45 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             event.pointerCount>1 || pinch.isInProgress
         }
         grid=GridOverlay(this)
-        val frame=FrameLayout(this).apply { addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1)) }
+        detail=text("1080p · cinematic video",11f,Color.WHITE).apply {
+            tag="detail";maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
+            background=shape(Color.argb(150,0,0,0),10);setPadding(dp(8),dp(3),dp(8),dp(3))
+        }
+        zoomBadge=text("1.0×",14f,Color.WHITE).apply {
+            tag="zoom-badge";typeface=Typeface.DEFAULT_BOLD
+            background=shape(Color.argb(150,0,0,0),16);setPadding(dp(12),dp(5),dp(12),dp(5))
+            importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val frame=FrameLayout(this).apply {
+            addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1))
+            addView(detail,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply { setMargins(dp(8),dp(8),dp(8),0) })
+            addView(zoomBadge,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
+        }
         val panel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL };normalControls=panel
         controlHost=FrameLayout(this).apply { tag="control-host";addView(panel) }
-        mode=button(if(pro) "Pro" else "Simple","mode") {
-            if(locked()) return@button
-            pro=!pro
-            if(!pro) { controls=Controls(stabilization=controls.stabilization,zoom=controls.zoom);engine?.update(controls) }
-            prefs.edit().putBoolean("pro",pro).apply();mode.text=if(pro) "Pro" else "Simple"
-            proRow.visibility=if(pro) View.VISIBLE else View.GONE
+        modeSimple=modeOption("Simpel","mode-simple") { setPro(false) }
+        modePro=modeOption("Pro","mode-pro") { setPro(true) }
+        val modeSwitch=LinearLayout(this).apply {
+            tag="mode-switch";gravity=Gravity.CENTER_VERTICAL;setPadding(dp(3),dp(3),dp(3),dp(3))
+            background=shape(Color.rgb(46,55,60),24)
+            addView(modeSimple,LinearLayout.LayoutParams(0,-1,1f));addView(modePro,LinearLayout.LayoutParams(0,-1,1f))
         }
-        val title=text("Cherry Video",20f,gold).apply { tag="app-title";typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL) }
-        val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;addView(title,LinearLayout.LayoutParams(0,dp(48),1f));addView(mode,LinearLayout.LayoutParams(dp(80),dp(42))) }
-        status=text("Menyiapkan kamera…",13f,gold).apply { tag="status";maxLines=3 }
-        detail=text("1080p · cinematic video",11f,muted)
-        lens=button("Kamera utama","lens") { chooseLens() }
-        quality=button(selected.label,"quality") { chooseQuality() }
+        val title=text("Cherry Video",20f,gold).apply { tag="app-title";typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);maxLines=1 }
+        val header=LinearLayout(this).apply {
+            gravity=Gravity.CENTER_VERTICAL
+            if(landscape) {
+                orientation=LinearLayout.VERTICAL
+                addView(title,LinearLayout.LayoutParams(-1,dp(40)));addView(modeSwitch,LinearLayout.LayoutParams(-1,dp(50)))
+            } else {
+                addView(title,LinearLayout.LayoutParams(0,dp(50),1f));addView(modeSwitch,LinearLayout.LayoutParams(dp(164),dp(50)))
+            }
+        }
+        status=text("Menyiapkan kamera…",13f,gold).apply { tag="status";maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END }
+        lens=button("Kamera utama","lens") { chooseLens() }.apply { textSize=13f }
+        quality=button(selected.label,"quality") { chooseQuality() }.apply { textSize=13f }
         zoomButton=button("1.0×","zoom") {
             zoomDock.visibility=if(zoomDock.visibility==View.VISIBLE) View.GONE else View.VISIBLE
-        }
+        }.apply { textSize=14f;setTextColor(gold);typeface=Typeface.DEFAULT_BOLD }
         zoomSeek=SeekBar(this).apply {
             tag="zoom-slider";max=1000;contentDescription="Zoom kamera"
             setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
@@ -203,33 +229,96 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             orientation=LinearLayout.VERTICAL;visibility=if(pro) View.VISIBLE else View.GONE
             addView(row(button("Fokus / Pull","focus") { showFocus() },button("Exposure","exposure") { showExposure() },button("WB","white-balance") { showWhiteBalance() }))
         }
-        record=button("●  REKAM","record") {
-            if(colorDock) closeColors()
-            val e=engine ?: return@button
-            if(e.isRecording) { record.isEnabled=false;onStatus("Menyimpan dan memeriksa video…");e.stop() }
-            else if(e.isReady && !e.busy) { record.isEnabled=false;onStatus("Memulai rekaman…");e.start(audio,audioMode,audioDeviceId) }
-        }.apply { textSize=18f;setTextColor(Color.rgb(16,19,21));background=shape(Color.rgb(255,110,99),28);isEnabled=false }
-        val gallery=button("Galeri","gallery") { showGallery() }
-        panel.addView(row(lens,quality,zoomButton));panel.addView(zoomDock);panel.addView(row(colors,stable));panel.addView(proRow)
-        panel.addView(row(audioButton,settings))
-        val recordRow=LinearLayout(this).apply {
-            gravity=Gravity.CENTER_VERTICAL;addView(gallery,LinearLayout.LayoutParams(dp(74),dp(52)).apply { setMargins(dp(3),dp(6),dp(6),dp(6)) })
-            addView(record,LinearLayout.LayoutParams(0,dp(60),1f).apply { setMargins(dp(3),dp(6),dp(3),dp(6)) })
+        record=RecordButton(this).apply {
+            tag="record";text="";contentDescription="Mulai rekaman"
+            minWidth=0;minimumWidth=0;minHeight=0;minimumHeight=0;setPadding(0,0,0,0);stateListAnimator=null
+            background=recordBackground(false);isEnabled=false
+            setOnClickListener {
+                if(colorDock) closeColors()
+                val e=engine ?: return@setOnClickListener
+                if(e.isRecording) { record.isEnabled=false;onStatus("Menyimpan dan memeriksa video…");e.stop() }
+                else if(e.isReady && !e.busy) { record.isEnabled=false;onStatus("Memulai rekaman…");e.start(audio,audioMode,audioDeviceId) }
+            }
         }
+        val gallery=toolButton("Galeri",R.drawable.ic_gallery,"gallery") { showGallery() }
+        moreButton=toolButton("Lainnya",R.drawable.ic_more,"more") { toggleDrawer() }
+        val topRow=LinearLayout(this).apply {
+            gravity=Gravity.CENTER_VERTICAL
+            addView(lens,LinearLayout.LayoutParams(0,dp(44),1f).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
+            addView(quality,LinearLayout.LayoutParams(0,dp(44),1f).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
+            addView(zoomButton,LinearLayout.LayoutParams(dp(if(landscape) 58 else 76),dp(44)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
+        }
+        // "Lainnya" drawer: secondary controls stay one tap away so the preview keeps most of the screen.
+        panel.addView(row(colors,stable));panel.addView(proRow);panel.addView(row(audioButton,settings))
+        val side=if(landscape) 64 else 84
+        val recordRow=LinearLayout(this).apply {
+            gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(6),0,dp(2))
+            addView(gallery,LinearLayout.LayoutParams(dp(side),dp(56)))
+            addView(View(this@MainActivity),LinearLayout.LayoutParams(0,1,1f))
+            addView(record,LinearLayout.LayoutParams(dp(76),dp(76)))
+            addView(View(this@MainActivity),LinearLayout.LayoutParams(0,1,1f))
+            addView(moreButton,LinearLayout.LayoutParams(dp(side),dp(56)))
+        }
+        val footer=text("Cherry Video ©2026 | totogutomo.com",10f,muted).apply { tag="footer";gravity=Gravity.CENTER;setPadding(0,dp(2),0,0) }
         if(landscape) {
             root.addView(frame,LinearLayout.LayoutParams(0,-1,1f))
             val sidebar=LinearLayout(this).apply {
-                orientation=LinearLayout.VERTICAL;addView(header);addView(status);addView(detail)
+                orientation=LinearLayout.VERTICAL;setPadding(dp(8),0,0,0)
+                addView(header);addView(status);addView(topRow);addView(zoomDock)
                 addView(ScrollView(this@MainActivity).apply { addView(controlHost) },LinearLayout.LayoutParams(-1,0,1f))
-                addView(recordRow)
+                addView(recordRow);addView(footer)
             }
             root.addView(sidebar,LinearLayout.LayoutParams(dp(254),-1))
         } else {
-            root.addView(header);root.addView(status);root.addView(detail)
-            root.addView(frame,LinearLayout.LayoutParams(-1,0,1f))
-            root.addView(controlHost);root.addView(recordRow)
+            root.addView(header);root.addView(status);root.addView(topRow);root.addView(zoomDock)
+            root.addView(frame,LinearLayout.LayoutParams(-1,0,1f).apply { topMargin=dp(4) })
+            root.addView(controlHost);root.addView(recordRow);root.addView(footer)
         }
+        applyModeUi();applyDrawerUi()
         setContentView(root);root.requestApplyInsets();updateSelectionLabels();rebuilding=false
+    }
+    private fun modeOption(value: String,tagName: String,action: ()->Unit)=button(value,tagName,action).apply {
+        textSize=14f;typeface=Typeface.DEFAULT_BOLD;stateListAnimator=null;maxLines=1
+    }
+    private fun setPro(value: Boolean) {
+        if(value==pro || locked()) return
+        pro=value
+        if(!pro) { controls=Controls(stabilization=controls.stabilization,zoom=controls.zoom);engine?.update(controls) }
+        prefs.edit().putBoolean("pro",pro).apply();applyModeUi()
+    }
+    /** Both labels stay visible: the active mode is green, the other grey. */
+    private fun applyModeUi() {
+        listOf(modeSimple to !pro,modePro to pro).forEach { (b,active) ->
+            b.isSelected=active
+            b.background=shape(if(active) green else Color.TRANSPARENT,22)
+            b.setTextColor(if(active) Color.rgb(11,26,16) else Color.rgb(174,183,188))
+            b.contentDescription="Mode ${b.text}${if(active) ", aktif" else ""}"
+        }
+        proRow.visibility=if(pro) View.VISIBLE else View.GONE
+    }
+    private fun toolButton(value: String,icon: Int,tagName: String,action: ()->Unit)=button(value,tagName,action).apply {
+        maxLines=1;setPadding(dp(4),dp(6),dp(4),dp(6));compoundDrawablePadding=dp(2)
+        setCompoundDrawablesRelativeWithIntrinsicBounds(0,icon,0,0);background=shape(surface,14)
+    }
+    private fun toggleDrawer() {
+        if(colorDock) { closeColors();return }
+        drawerOpen=!drawerOpen;applyDrawerUi()
+    }
+    private fun applyDrawerUi() {
+        normalControls.visibility=if(drawerOpen) View.VISIBLE else View.GONE
+        moreButton.text=if(drawerOpen) "Tutup" else "Lainnya"
+        moreButton.contentDescription=if(drawerOpen) "Tutup menu lainnya" else "Buka menu lainnya"
+        moreButton.setCompoundDrawablesRelativeWithIntrinsicBounds(0,if(drawerOpen) R.drawable.ic_less else R.drawable.ic_more,0,0)
+        moreButton.background=shape(if(drawerOpen) Color.rgb(52,63,69) else surface,14)
+    }
+    private fun recordBackground(active: Boolean): android.graphics.drawable.Drawable {
+        val ring=GradientDrawable().apply { shape=GradientDrawable.OVAL;setColor(Color.TRANSPARENT);setStroke(dp(4),Color.WHITE) }
+        val core=GradientDrawable()
+        if(active) core.cornerRadius=dp(6).toFloat() else core.shape=GradientDrawable.OVAL
+        core.setColor(Color.rgb(255,110,99))
+        return android.graphics.drawable.LayerDrawable(arrayOf(ring,core)).apply {
+            val inset=dp(if(active) 22 else 10);setLayerInset(1,inset,inset,inset,inset)
+        }
     }
     private fun storageLabel(): String=String.format(Locale.US,"%.1f GB kosong",StatFs(filesDir.path).availableBytes/1_073_741_824.0)
     private fun thermalLabel()=when { thermal>=3 -> "Panas";thermal>=1 -> "Suhu meningkat";else -> "Suhu normal" }
@@ -281,6 +370,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val camera=cameras.getOrNull(cameraIndex) ?: return
         zoomButton.text=String.format(Locale.US,"%.1f×",controls.zoom)
         zoomButton.contentDescription="Zoom ${zoomButton.text}"
+        zoomBadge.text=zoomButton.text
         zoomButton.isEnabled=!selected.highSpeed && camera.zoomMax>camera.zoomMin
         zoomSeek.isEnabled=zoomButton.isEnabled
         zoomSeek.progress=if(camera.zoomMax>camera.zoomMin) ((controls.zoom-camera.zoomMin)/(camera.zoomMax-camera.zoomMin)*1000).toInt() else 0
@@ -331,10 +421,11 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(isDestroyed) return
         requestedOrientation=if(active) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         if(active) recordingSince=SystemClock.elapsedRealtime()
-        record.text=if(active) "■  STOP" else "●  REKAM"
+        record.background=recordBackground(active)
         record.contentDescription=if(active) "Stop rekaman" else "Mulai rekaman"
         record.isEnabled=engine?.isReady==true
-        mode.isEnabled=!active;lens.isEnabled=!active;quality.isEnabled=!active;colors.isEnabled=!active
+        listOf(modeSimple,modePro).forEach { it.isEnabled=!active;it.alpha=if(active) .5f else 1f }
+        lens.isEnabled=!active;quality.isEnabled=!active;colors.isEnabled=!active
         if(active) onStatus("Merekam · ${selected.label} · ${if(bake) "warna tersimpan" else "LUT pratinjau"}")
     }
     override fun onSaved(video: SavedVideo) {
@@ -681,8 +772,15 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     @Deprecated("Legacy Activity API")
     override fun onBackPressed() {
         if(engine?.isRecording==true) AlertDialog.Builder(this).setTitle("Simpan dan keluar?").setMessage("Rekaman akan dihentikan dan disimpan.").setPositiveButton("Simpan") { _,_ -> engine?.stop() }.setNegativeButton("Lanjut merekam",null).show()
-        else if(colorDock) closeColors() else super.onBackPressed()
+        else if(colorDock) closeColors()
+        else if(drawerOpen) { drawerOpen=false;applyDrawerUi() }
+        else super.onBackPressed()
     }
+}
+
+/** Round shutter control; dims itself while the camera is not ready. */
+private class RecordButton(context: Context): Button(context) {
+    override fun setEnabled(enabled: Boolean) { super.setEnabled(enabled);alpha=if(enabled) 1f else .45f }
 }
 
 private class GridOverlay(context: Context): View(context) {

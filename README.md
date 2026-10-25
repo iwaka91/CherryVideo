@@ -4,7 +4,15 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 ![Android qualification](https://github.com/iwaka91/CherryVideo/actions/workflows/android.yml/badge.svg)
 
-[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — keputusan pengujian 25 Oktober 2026; fokus zoom dua jari dan kontrol Simpel | Pro. Daftar ini belum merupakan fitur yang sudah selesai.
+[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status zoom dua jari dan kontrol Simpel | Pro.
+
+## Update 0.3.1 (UI baru)
+
+- Tata letak potret mengikuti mockup: judul dan sakelar **Simpel | Pro** di atas, baris Kamera · Kualitas · Zoom, preview besar dengan badge rasio zoom, lalu Galeri · tombol Rekam bulat · Lainnya.
+- Sakelar Simpel | Pro: kedua label selalu terlihat, mode aktif hijau, tidak aktif abu-abu. Dipilih dengan ketuk; preferensi tetap tersimpan dan sakelar terkunci saat merekam.
+- Laci **Lainnya** memuat LUT, Stabilisasi, Audio, Pengaturan, dan (mode Pro) Fokus · Exposure · WB. Tombol Kembali menutup laci.
+- Info rekam/preview tampil sebagai label kecil di sudut preview; footer "Cherry Video ©2026 | totogutomo.com".
+- Landscape: kontrol di panel kanan, sakelar di bawah judul. Logika kamera, rekaman, audio, LUT, dan zoom tidak diubah; perbaikan gestur zoom dua jari menyusul terpisah.
 
 ## Update 0.3.0
 
