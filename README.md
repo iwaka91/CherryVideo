@@ -4,7 +4,15 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 ![Android qualification](https://github.com/iwaka91/CherryVideo/actions/workflows/android.yml/badge.svg)
 
-[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status zoom dua jari dan kontrol Simpel | Pro.
+[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status 0.3.2-beta dan rencana Cinematic Look / Bokeh AI.
+
+## Update 0.3.2
+
+- Cubit dua jari memperbesar/memperkecil langsung di preview (Simpel dan Pro), badge/tombol/slider sinkron dengan kamera, teks singkat bila zoom dibatasi profil, dan zoom tidak menghentikan rekaman.
+- Kamera belakang digabung menjadi **Belakang** + tombol **Balik kamera**; pintasan zoom 0.6× | 1× | 2×. Pilihan lensa teknis ada di Pengaturan → Diagnostik.
+- Sakelar **Simpel | Pro** pindah ke laci Lainnya, dengan penanda **PRO** di header.
+- LUT bawaan baru **Cinematic 1** dan **Cinematic 2**.
+- **Uji telefoto** di Diagnostik: mencatat tahap demi tahap dan menyapu zoom untuk melihat apakah HP berpindah lensa.
 
 ## Update 0.3.1 (UI baru)
 

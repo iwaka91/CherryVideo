@@ -4,7 +4,26 @@ Tanggal keputusan: **25 Oktober 2026**. Basis pemeriksaan: **0.3.0-beta**, Xiaom
 
 Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplikasi di bawah belum diimplementasikan.** Pembuatan dokumen ini tidak menjadi perintah untuk langsung mengerjakan seluruh catatan. Baca ruang lingkup terbaru sebelum melanjutkan di sesi lain.
 
-## Status terbaru — 0.3.1-beta
+## Status terbaru — 0.3.2-beta
+
+Hasil uji pengguna pada 0.3.1-beta (Xiaomi 13T): cubit tidak berfungsi; kamera utama sudah berpindah ke wide otomatis di zoom 0.6 (sama seperti kamera bawaan); telefoto tidak pernah aktif sampai zoom 10×; peralihan Simpel ↔ Pro kurang terasa.
+
+**Bagian 1 — selesai di kode (belum diuji di Xiaomi; emulator tidak membuktikan cubit nyata, pindah lensa, atau telefoto):**
+
+- **A. Zoom.** Preview kini menerima seluruh rangkaian sentuhan sejak jari pertama, sehingga cubit dua jari terbaca (penyebab: jari pertama sebelumnya ditolak, jari kedua tidak pernah dikirim ke preview). Badge, tombol, dan slider mengikuti laporan nyata kamera. Teks singkat di layar bila profil high-speed atau lensa membatasi zoom. Zoom tidak menghentikan rekaman. Pembatas high-speed tidak dihapus.
+- **B. Kamera.** Kamera belakang digabung menjadi satu **Belakang**; tombol **Balik kamera** berpindah Depan ↔ Belakang (terkunci saat merekam). Pintasan zoom 0.6× | 1× | 2× pada kamera belakang, hanya yang didukung kamera. Pilihan lensa fisik dipindah ke Pengaturan → Diagnostik → **Pilih lensa teknis (uji)**; ID 7 yang sama dengan Utama tidak diulang di pemilih (data tetap ada di Diagnostik). Pilihan kamera lama (indeks) dikonversi ke Belakang/Depan.
+- **C. Simpel | Pro.** Sakelar dipindah ke laci **Lainnya** (mati = Simpel, hidup = Pro). Penanda hijau **PRO** di header saat Pro aktif. Pro menambah Fokus · Exposure · WB. Preferensi tersimpan, terkunci saat merekam. Tata letak Lainnya mengikuti gaya layar utama; tidak ada mockup baru.
+- **D. LUT bawaan baru:** **Cinematic 1** (kontras film, bayangan teal, highlight hangat) dan **Cinematic 2** (lembut, hitam terangkat, hangat, warna sedikit pudar). Empat LUT lama tidak berubah.
+- **E. Uji telefoto** (Pengaturan → Diagnostik). Melepas kamera sementara, lalu mencatat per tahap untuk setiap ID kandidat: terdaftar, metadata terbaca, kamera terbuka, sesi preview, frame masuk. Menyapu zoom (0.6 → 10×) pada kamera utama dan mencatat lensa fisik aktif serta panjang fokus tiap langkah, lalu menyimpulkan apakah lensa berpindah. Hasil bisa disalin atau diekspor sebagai JSON. Tidak merekam dan tidak mengubah pengaturan. **Tidak ada jaminan telefoto bisa dipakai;** hasilnya adalah bukti.
+- **Versi:** 0.3.2-beta (versionCode 7). Paket `id.tege.video.hotfix` dan kunci uji tidak berubah.
+
+**Yang perlu Bapak uji di HP:** cubit/rentang di Simpel dan Pro (juga saat merekam, setelah rotasi, grid aktif); tombol 0.6/1/2×; Balik kamera; sakelar Simpel | Pro di Lainnya dan penanda PRO; LUT Cinematic 1 dan 2; lalu jalankan **Uji telefoto** dan kirim JSON-nya.
+
+**Bagian 2 — terpisah, belum dikerjakan (urutan disepakati):** (1) Cinematic Look: warna film + efek film halus, bilah sinematik opsional; 24 fps butuh profil baru dan keputusan terpisah. (2) Bokeh AI: eksperimen, hanya orang, MediaPipe, kinerja diukur dulu dan mati otomatis bila FPS turun atau HP panas.
+
+**Tidak dikerjakan:** keterangan "Guru SMA Negeri 3 Maliku" di Tentang dan penyimpanan mockup ke `docs/mockup` (diputuskan diabaikan), mockup Lainnya/landscape.
+
+### Riwayat — 0.3.1-beta
 
 - **Selesai di kode (belum diuji di Xiaomi):** UI potret baru sesuai mockup ("Mockup Cherry Video", layar utama Simpel potret) dan sakelar **Simpel | Pro** (butir 2 di bawah). Mode dipilih dengan ketuk; geser tidak diwajibkan pengguna.
 - **Keputusan pengguna:** UI dirombak lebih dulu; perbaikan gestur zoom dua jari (butir 1) dikerjakan terpisah setelahnya, di UI baru. Keterangan saat profil membatasi zoom: teks singkat di layar.
