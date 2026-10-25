@@ -18,4 +18,23 @@ class ZoomPolicyTest {
         assertTrue(a[0]>=12 && a[1]>=20 && a[2]<=101 && a[3]<=103)
         assertTrue(a[2]>a[0] && a[3]>a[1])
     }
+    @Test fun presetsOnlyListRatiosTheRearCameraSupports() {
+        assertEquals(listOf(.6f,1f,2f),ZoomPolicy.presets(.6f,10f,false))
+        assertEquals(listOf(1f,2f),ZoomPolicy.presets(1f,10f,false))
+        assertEquals(listOf(.6f,1f),ZoomPolicy.presets(.6f,1.5f,false))
+        assertTrue(ZoomPolicy.presets(1f,1f,false).isEmpty())
+        assertTrue(ZoomPolicy.presets(1f,8f,true).isEmpty())
+        assertTrue(ZoomPolicy.presets(Float.NaN,8f,false).isEmpty())
+    }
+    @Test fun labelsAreShortAndMatchBadge() {
+        assertEquals("0.6×",ZoomPolicy.label(.6f))
+        assertEquals("1×",ZoomPolicy.label(1f))
+        assertEquals("2×",ZoomPolicy.label(2f))
+        assertEquals("2.4×",ZoomPolicy.label(2.4048f))
+    }
+    @Test fun presetMatchUsesSmallTolerance() {
+        val presets=listOf(.6f,1f,2f)
+        assertEquals(1f,ZoomPolicy.matchesPreset(1.03f,presets))
+        assertNull(ZoomPolicy.matchesPreset(1.4f,presets))
+    }
 }
