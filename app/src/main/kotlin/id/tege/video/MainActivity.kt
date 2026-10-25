@@ -70,6 +70,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var cameras=emptyList<CameraEntry>()
     private var cameraIndex=0
     private var selected=VideoProfile(1920,1080,30)
+    /** Counters for diagnostics in automated tests only. */
+    @Volatile internal var touchEvents=0
+    @Volatile internal var scaleBegins=0
+    @Volatile internal var lastTouchPointers=0
     private var controls=Controls()
     private var pro=false
     private var hevc=false
@@ -172,7 +176,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         preview=SurfaceView(this).apply { holder.addCallback(this@MainActivity);tag="viewfinder" }
         var pinched=false
         val pinch=ScaleGestureDetector(this,object: ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean { pinched=true;return true }
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean { pinched=true;scaleBegins++;return true }
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 setZoom(controls.zoom*detector.scaleFactor);return true
             }
@@ -180,6 +184,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         // The preview must take the whole touch sequence from the first finger down. If the first finger is
         // refused, Android never delivers the second finger to this view and the pinch is lost.
         preview.setOnTouchListener { view,event ->
+            touchEvents++;lastTouchPointers=event.pointerCount
             if(event.actionMasked==MotionEvent.ACTION_DOWN) pinched=false
             pinch.onTouchEvent(event)
             if(event.actionMasked==MotionEvent.ACTION_UP && !pinched) view.performClick()

@@ -349,7 +349,7 @@ class QualificationTest {
             val note=d.findViewWithTag<android.widget.TextView>("zoom-note")
             val view=d.findViewWithTag<View>("viewfinder")
             val seek=d.findViewWithTag<View>("zoom-slider")
-            text="note=${note?.visibility}/'${note?.text}' preview=${view?.width}x${view?.height} focus=${activity.hasWindowFocus()} detail='${d.findViewWithTag<android.widget.TextView>("detail")?.text}' seek=${seek?.isEnabled}"
+            text="touch=${activity.touchEvents} begins=${activity.scaleBegins} lastPointers=${activity.lastTouchPointers} note=${note?.visibility}/'${note?.text}' preview=${view?.width}x${view?.height} focus=${activity.hasWindowFocus()} detail='${d.findViewWithTag<android.widget.TextView>("detail")?.text}' seek=${seek?.isEnabled}"
         }
         return text
     }
