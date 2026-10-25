@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.*
 import android.content.*
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
@@ -36,10 +37,19 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private lateinit var status: TextView
     private lateinit var detail: TextView
     private lateinit var record: Button
-    private lateinit var modeSimple: Button
-    private lateinit var modePro: Button
+    private lateinit var modeSwitch: Switch
+    private lateinit var proBadge: TextView
     private lateinit var moreButton: Button
     private lateinit var zoomBadge: TextView
+    private lateinit var zoomChips: LinearLayout
+    private lateinit var note: TextView
+    private val chipViews=ArrayList<TextView>()
+    private var chipValues=emptyList<Float>()
+    private var chipKey=""
+    private var zoomChangedAt=0L
+    private var probing=false
+    private val lookNames=arrayOf("Natural","Hangat","Teal","Mono","Cinematic 1","Cinematic 2")
+    private val hideNote=Runnable { if(::note.isInitialized) note.visibility=View.GONE }
     private var drawerOpen=false
     private lateinit var quality: Button
     private lateinit var colors: Button
@@ -94,6 +104,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         override fun run() {
             if(!resumed) return
             val e=engine
+            syncZoomFromCamera(e)
             if(e?.isRecording==true) {
                 val elapsed=(SystemClock.elapsedRealtime()-recordingSince)/1000
                 val amp=e.amplitude()
@@ -113,13 +124,15 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         pro=prefs.getBoolean("pro",false);hevc=prefs.getBoolean("hevc",false);audio=prefs.getInt("audio",1)
         controls=Controls(stabilization=prefs.getInt("stabilization",-1))
         audioMode=AudioMode.fromOrdinal(prefs.getInt("audioMode",0));audioDeviceId=prefs.getInt("audioDeviceId",0)
-        cameraIndex=prefs.getInt("cameraIndex",0)
         selected=VideoProfile(prefs.getInt("width",1920),prefs.getInt("height",1080),prefs.getInt("fps",30),prefs.getInt("captureFps",30))
         look=prefs.getInt("look",0);strength=prefs.getFloat("strength",1f);bake=prefs.getBoolean("bake",true)
         val stored=prefs.getString("lut",null)
         if(stored!=null) runCatching { lut=CubeLut.parse(File(filesDir,"luts/$stored.cube").readBytes());lutName=prefs.getString("lutName","LUT Saya").orEmpty() }
         cameras=runCatching { CameraCatalog.list(this) }.getOrDefault(emptyList())
-        cameraIndex=cameraIndex.coerceIn(0,(cameras.size-1).coerceAtLeast(0))
+        // Rear lenses are merged into one "Belakang" camera. Older versions stored a list index; keep its facing only.
+        val storedFacing=prefs.getString("facing",null)
+        val wantFront=if(storedFacing!=null) storedFacing=="front" else cameras.getOrNull(prefs.getInt("cameraIndex",0))?.front==true
+        cameraIndex=defaultIndex(wantFront)
         buildUi()
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.CAMERA,Manifest.permission.RECORD_AUDIO),1)
@@ -157,15 +170,20 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             }
         }
         preview=SurfaceView(this).apply { holder.addCallback(this@MainActivity);tag="viewfinder" }
+        var pinched=false
         val pinch=ScaleGestureDetector(this,object: ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean { pinched=true;return true }
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 setZoom(controls.zoom*detector.scaleFactor);return true
             }
         })
+        // The preview must take the whole touch sequence from the first finger down. If the first finger is
+        // refused, Android never delivers the second finger to this view and the pinch is lost.
         preview.setOnTouchListener { view,event ->
+            if(event.actionMasked==MotionEvent.ACTION_DOWN) pinched=false
             pinch.onTouchEvent(event)
-            if(event.actionMasked==MotionEvent.ACTION_UP) view.performClick()
-            event.pointerCount>1 || pinch.isInProgress
+            if(event.actionMasked==MotionEvent.ACTION_UP && !pinched) view.performClick()
+            true
         }
         grid=GridOverlay(this)
         detail=text("1080p · cinematic video",11f,Color.WHITE).apply {
@@ -177,32 +195,52 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             background=shape(Color.argb(150,0,0,0),16);setPadding(dp(12),dp(5),dp(12),dp(5))
             importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
+        zoomChips=LinearLayout(this).apply {
+            tag="zoom-chips";gravity=Gravity.CENTER_VERTICAL;visibility=View.GONE
+            background=shape(Color.argb(150,0,0,0),20);setPadding(dp(4),dp(3),dp(4),dp(3))
+        }
+        val zoomOverlay=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL
+            addView(zoomBadge,LinearLayout.LayoutParams(-2,-2).apply { bottomMargin=dp(6) })
+            addView(zoomChips,LinearLayout.LayoutParams(-2,-2))
+        }
+        note=text("",13f,Color.WHITE).apply {
+            tag="zoom-note";visibility=View.GONE;gravity=Gravity.CENTER
+            background=shape(Color.argb(190,0,0,0),14);setPadding(dp(12),dp(8),dp(12),dp(8))
+        }
+        chipKey="";chipViews.clear()
         val frame=FrameLayout(this).apply {
             addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1))
             addView(detail,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply { setMargins(dp(8),dp(8),dp(8),0) })
-            addView(zoomBadge,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
+            addView(zoomOverlay,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
+            addView(note,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER).apply { setMargins(dp(16),0,dp(16),0) })
         }
         val panel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL };normalControls=panel
         controlHost=FrameLayout(this).apply { tag="control-host";addView(panel) }
-        modeSimple=modeOption("Simpel","mode-simple") { setPro(false) }
-        modePro=modeOption("Pro","mode-pro") { setPro(true) }
-        val modeSwitch=LinearLayout(this).apply {
-            tag="mode-switch";gravity=Gravity.CENTER_VERTICAL;setPadding(dp(3),dp(3),dp(3),dp(3))
-            background=shape(Color.rgb(46,55,60),24)
-            addView(modeSimple,LinearLayout.LayoutParams(0,-1,1f));addView(modePro,LinearLayout.LayoutParams(0,-1,1f))
+        // Simpel | Pro lives in the "Lainnya" drawer as one switch; a small PRO badge in the header shows the active mode.
+        modeSwitch=Switch(this).apply {
+            tag="mode-pro";textSize=14f;setTextColor(Color.WHITE);setPadding(dp(12),0,dp(12),0)
+            background=shape(surface,12)
+            val states=arrayOf(intArrayOf(android.R.attr.state_checked),intArrayOf())
+            thumbTintList=ColorStateList(states,intArrayOf(green,Color.rgb(174,183,188)))
+            trackTintList=ColorStateList(states,intArrayOf(Color.argb(150,47,191,113),Color.rgb(70,80,86)))
+            isChecked=pro
+            setOnCheckedChangeListener { _,checked -> if(!setPro(checked)) applyModeUi() }
+        }
+        proBadge=text("PRO",12f,Color.rgb(11,26,16)).apply {
+            tag="pro-badge";typeface=Typeface.DEFAULT_BOLD;gravity=Gravity.CENTER;visibility=View.GONE
+            background=shape(green,12);setPadding(dp(10),dp(3),dp(10),dp(3))
         }
         val title=text("Cherry Video",20f,gold).apply { tag="app-title";typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);maxLines=1 }
         val header=LinearLayout(this).apply {
             gravity=Gravity.CENTER_VERTICAL
-            if(landscape) {
-                orientation=LinearLayout.VERTICAL
-                addView(title,LinearLayout.LayoutParams(-1,dp(40)));addView(modeSwitch,LinearLayout.LayoutParams(-1,dp(50)))
-            } else {
-                addView(title,LinearLayout.LayoutParams(0,dp(50),1f));addView(modeSwitch,LinearLayout.LayoutParams(dp(164),dp(50)))
-            }
+            addView(title,LinearLayout.LayoutParams(0,dp(46),1f));addView(proBadge,LinearLayout.LayoutParams(-2,-2))
         }
         status=text("Menyiapkan kamera…",13f,gold).apply { tag="status";maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END }
-        lens=button("Kamera utama","lens") { chooseLens() }.apply { textSize=13f }
+        lens=button("Belakang","lens") { flipCamera() }.apply {
+            textSize=13f;compoundDrawablePadding=dp(4)
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_flip_camera,0,0,0)
+        }
         quality=button(selected.label,"quality") { chooseQuality() }.apply { textSize=13f }
         zoomButton=button("1.0×","zoom") {
             zoomDock.visibility=if(zoomDock.visibility==View.VISIBLE) View.GONE else View.VISIBLE
@@ -249,6 +287,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             addView(zoomButton,LinearLayout.LayoutParams(dp(if(landscape) 58 else 76),dp(44)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
         }
         // "Lainnya" drawer: secondary controls stay one tap away so the preview keeps most of the screen.
+        panel.addView(modeSwitch,LinearLayout.LayoutParams(-1,dp(46)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
         panel.addView(row(colors,stable));panel.addView(proRow);panel.addView(row(audioButton,settings))
         val side=if(landscape) 64 else 84
         val recordRow=LinearLayout(this).apply {
@@ -274,26 +313,24 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             root.addView(frame,LinearLayout.LayoutParams(-1,0,1f).apply { topMargin=dp(4) })
             root.addView(controlHost);root.addView(recordRow);root.addView(footer)
         }
-        applyModeUi();applyDrawerUi()
+        applyModeUi();applyDrawerUi();updateLensUi();updateZoomUi()
         setContentView(root);root.requestApplyInsets();updateSelectionLabels();rebuilding=false
     }
-    private fun modeOption(value: String,tagName: String,action: ()->Unit)=button(value,tagName,action).apply {
-        textSize=14f;typeface=Typeface.DEFAULT_BOLD;stateListAnimator=null;maxLines=1
-    }
-    private fun setPro(value: Boolean) {
-        if(value==pro || locked()) return
+    /** Returns false when the change was refused (recording), so the switch can snap back. */
+    private fun setPro(value: Boolean): Boolean {
+        if(value==pro) return true
+        if(locked()) return false
         pro=value
         if(!pro) { controls=Controls(stabilization=controls.stabilization,zoom=controls.zoom);engine?.update(controls) }
         prefs.edit().putBoolean("pro",pro).apply();applyModeUi()
+        return true
     }
-    /** Both labels stay visible: the active mode is green, the other grey. */
+    /** Switch off = Simpel, on = Pro. Pro adds Fokus, Exposure and WB to the drawer and shows a PRO badge. */
     private fun applyModeUi() {
-        listOf(modeSimple to !pro,modePro to pro).forEach { (b,active) ->
-            b.isSelected=active
-            b.background=shape(if(active) green else Color.TRANSPARENT,22)
-            b.setTextColor(if(active) Color.rgb(11,26,16) else Color.rgb(174,183,188))
-            b.contentDescription="Mode ${b.text}${if(active) ", aktif" else ""}"
-        }
+        modeSwitch.text=if(pro) "Mode Pro" else "Mode Simpel"
+        modeSwitch.contentDescription="${modeSwitch.text}. Geser untuk berganti antara Simpel dan Pro."
+        if(modeSwitch.isChecked!=pro) modeSwitch.isChecked=pro
+        proBadge.visibility=if(pro) View.VISIBLE else View.GONE
         proRow.visibility=if(pro) View.VISIBLE else View.GONE
     }
     private fun toolButton(value: String,icon: Int,tagName: String,action: ()->Unit)=button(value,tagName,action).apply {
@@ -322,7 +359,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun storageLabel(): String=String.format(Locale.US,"%.1f GB kosong",StatFs(filesDir.path).availableBytes/1_073_741_824.0)
     private fun thermalLabel()=when { thermal>=3 -> "Panas";thermal>=1 -> "Suhu meningkat";else -> "Suhu normal" }
-    private fun gradeLabel()=if(lut!=null) lutName else arrayOf("Natural","Hangat","Teal","Mono").getOrElse(look) { "Natural" }
+    private fun gradeLabel()=if(lut!=null) lutName else lookNames.getOrElse(look) { "Natural" }
     private fun stabilizationLabel()=when(controls.stabilization) { 1->"OIS";2->"EIS";else->"OFF" }
     private fun audioLabel()=when(audio) { 1->"Kamera";2->"Mic eksternal";else->"OFF" }
     private fun updateSelectionLabels() {
@@ -342,14 +379,15 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         return if(c.front) (c.rotation+displayDegrees)%360 else (c.rotation-displayDegrees+360)%360
     }
     private fun startCamera() {
-        if(!resumed || engine!=null || retiringEngines>0 || !preview.holder.surface.isValid || cameras.isEmpty()) return
+        if(!resumed || probing || engine!=null || retiringEngines>0 || !preview.holder.surface.isValid || cameras.isEmpty()) return
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) { onStatus("Berikan izin Kamera melalui Pengaturan Android untuk merekam.");return }
         val camera=cameras[cameraIndex]
         val options=camera.profiles(hevc);qualityOptions=options
         if(options.isEmpty()) { onError("Tidak ada profil video standar yang memenuhi batas kamera dan encoder.");return }
         if(selected !in options) { selected=options.first();onStatus("Profil tersedia: ${selected.label}") }
-        quality.text=selected.label;lens.text=camera.label.substringBefore(" · ID")
+        quality.text=selected.label;updateLensUi()
         controls=controls.copy(zoom=if(selected.highSpeed) 1f else ZoomPolicy.clamp(controls.zoom,camera.zoomMin,camera.zoomMax))
+        zoomChangedAt=SystemClock.elapsedRealtime()
         updateZoomUi()
         if(controls.stabilization<0 || (controls.stabilization==1 && !camera.ois) || (controls.stabilization==2 && !camera.eis))
             controls=controls.copy(stabilization=if(camera.ois) 1 else if(camera.eis) 2 else 0)
@@ -362,19 +400,65 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun setZoom(ratio: Float) {
         val camera=cameras.getOrNull(cameraIndex) ?: return
-        if(selected.highSpeed || engine?.busy==true) return
+        if(camera.zoomMax<=camera.zoomMin) { flashNote("Kamera ini tidak mendukung zoom.");return }
+        if(selected.highSpeed) { flashNote("Zoom dinonaktifkan pada 60 fps high-speed. Pilih 30 fps untuk zoom.");return }
+        if(engine?.busy==true) return
         controls=controls.copy(zoom=ZoomPolicy.clamp(ratio,camera.zoomMin,camera.zoomMax))
+        zoomChangedAt=SystemClock.elapsedRealtime()
         engine?.update(controls);updateZoomUi()
+    }
+    /** Short on-screen message that hides itself; used when zoom is limited by the profile or the lens. */
+    private fun flashNote(value: String) {
+        if(!::note.isInitialized) return
+        note.text=value;note.visibility=View.VISIBLE
+        main.removeCallbacks(hideNote);main.postDelayed(hideNote,2600)
+    }
+    /** The display must never show a ratio the camera is not using, so it follows the camera's own report. */
+    private fun syncZoomFromCamera(e: CameraEngine?) {
+        if(e==null || !e.isReady || e.busy || selected.highSpeed) return
+        if(SystemClock.elapsedRealtime()-zoomChangedAt<1200) return
+        val camera=cameras.getOrNull(cameraIndex) ?: return
+        val reported=e.reportedZoom ?: return
+        if(reported.isFinite() && reported>=camera.zoomMin-.01f && reported<=camera.zoomMax+.01f && kotlin.math.abs(reported-controls.zoom)>.12f) {
+            controls=controls.copy(zoom=reported);updateZoomUi()
+        }
     }
     private fun updateZoomUi() {
         val camera=cameras.getOrNull(cameraIndex) ?: return
+        val limited=selected.highSpeed || camera.zoomMax<=camera.zoomMin
         zoomButton.text=String.format(Locale.US,"%.1f×",controls.zoom)
         zoomButton.contentDescription="Zoom ${zoomButton.text}"
         zoomBadge.text=zoomButton.text
-        zoomButton.isEnabled=!selected.highSpeed && camera.zoomMax>camera.zoomMin
+        zoomButton.isEnabled=!limited
         zoomSeek.isEnabled=zoomButton.isEnabled
         zoomSeek.progress=if(camera.zoomMax>camera.zoomMin) ((controls.zoom-camera.zoomMin)/(camera.zoomMax-camera.zoomMin)*1000).toInt() else 0
         if(!zoomButton.isEnabled) zoomDock.visibility=View.GONE
+        updateZoomChips(camera)
+    }
+    /** Rear camera shortcuts such as 0.6× | 1× | 2×, limited to ratios the camera supports. */
+    private fun updateZoomChips(camera: CameraEntry) {
+        val key="$cameraIndex"
+        if(key!=chipKey) {
+            chipKey=key;zoomChips.removeAllViews();chipViews.clear()
+            chipValues=ZoomPolicy.presets(camera.zoomMin,camera.zoomMax,camera.front)
+            chipValues.forEach { value ->
+                val chip=text(ZoomPolicy.label(value),12f,Color.WHITE).apply {
+                    tag="zoom-chip-${ZoomPolicy.label(value).removeSuffix("×")}";gravity=Gravity.CENTER;typeface=Typeface.DEFAULT_BOLD
+                    contentDescription="Zoom ${ZoomPolicy.label(value)}"
+                    setOnClickListener { setZoom(value) }
+                }
+                chipViews.add(chip);zoomChips.addView(chip,LinearLayout.LayoutParams(dp(46),dp(32)).apply { setMargins(dp(1),0,dp(1),0) })
+            }
+            zoomChips.visibility=if(chipValues.size>=2) View.VISIBLE else View.GONE
+        }
+        val matched=ZoomPolicy.matchesPreset(controls.zoom,chipValues)
+        chipValues.forEachIndexed { index,value ->
+            val chip=chipViews[index];val active=matched==value
+            chip.setTextColor(if(active) Color.rgb(16,19,21) else Color.WHITE)
+            chip.background=if(active) shape(gold,16) else null
+            chip.alpha=if(selected.highSpeed) .45f else 1f
+        }
+        zoomBadge.visibility=if(chipValues.size>=2 && matched!=null) View.GONE else View.VISIBLE
     }
     private fun retireEngine() {
         val old=engine ?: return
@@ -406,7 +490,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) audio=0
         if(requestCode==1) {
             cameras=runCatching { CameraCatalog.list(this) }.getOrDefault(emptyList())
-            cameraIndex=cameraIndex.coerceIn(0,(cameras.size-1).coerceAtLeast(0))
+            cameraIndex=defaultIndex(prefs.getString("facing","back")=="front")
         }
         updateSelectionLabels()
         startCamera()
@@ -424,8 +508,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         record.background=recordBackground(active)
         record.contentDescription=if(active) "Stop rekaman" else "Mulai rekaman"
         record.isEnabled=engine?.isReady==true
-        listOf(modeSimple,modePro).forEach { it.isEnabled=!active;it.alpha=if(active) .5f else 1f }
-        lens.isEnabled=!active;quality.isEnabled=!active;colors.isEnabled=!active
+        modeSwitch.isEnabled=!active;modeSwitch.alpha=if(active) .5f else 1f
+        lens.isEnabled=!active && hasBothFacings();quality.isEnabled=!active;colors.isEnabled=!active
         if(active) onStatus("Merekam · ${selected.label} · ${if(bake) "warna tersimpan" else "LUT pratinjau"}")
     }
     override fun onSaved(video: SavedVideo) {
@@ -440,11 +524,50 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun locked(): Boolean {
         if(engine?.isRecording==true || engine?.busy==true) { Toast.makeText(this,"Selesaikan rekaman dahulu.",Toast.LENGTH_SHORT).show();return true };return false
     }
-    private fun chooseLens() {
+    /** First camera of the wanted facing. The list puts the main lens first, so this is the merged "Belakang"/"Depan". */
+    private fun defaultIndex(front: Boolean): Int {
+        val plain=cameras.indexOfFirst { it.front==front && !it.physical }
+        if(plain>=0) return plain
+        val any=cameras.indexOfFirst { it.front==front }
+        return if(any>=0) any else 0
+    }
+    private fun hasBothFacings()=cameras.any { it.front } && cameras.any { !it.front }
+    private fun updateLensUi() {
+        val c=cameras.getOrNull(cameraIndex)
+        val facing=if(c?.front==true) "Depan" else "Belakang"
+        val test=c!=null && cameraIndex!=defaultIndex(c.front)
+        lens.text=if(test) "$facing · ID ${c?.id}" else facing
+        lens.contentDescription="Balik kamera. Sekarang kamera ${facing.lowercase(Locale.US)}."
+        lens.isEnabled=hasBothFacings() && engine?.isRecording!=true
+    }
+    /** One button flips between front and back; the rear lenses are merged into the main logical camera. */
+    private fun flipCamera() {
         if(locked()) return
-        AlertDialog.Builder(this).setTitle("Lensa yang dilaporkan perangkat").setSingleChoiceItems(cameras.map { it.label }.toTypedArray(),cameraIndex) { dialog,index ->
-            cameraIndex=index;prefs.edit().putInt("cameraIndex",index).apply();controls=Controls();focusA=0f;focusB=0f;dialog.dismiss();restart()
+        val target=cameras.getOrNull(cameraIndex)?.front!=true
+        val index=defaultIndex(target)
+        if(cameras.getOrNull(index)?.front!=target) { flashNote("Kamera ${if(target) "depan" else "belakang"} tidak tersedia.");return }
+        cameraIndex=index
+        prefs.edit().putString("facing",if(target) "front" else "back").apply()
+        controls=Controls(stabilization=prefs.getInt("stabilization",-1));focusA=0f;focusB=0f
+        lens.animate().scaleX(.82f).scaleY(.82f).setDuration(90).withEndAction { lens.animate().scaleX(1f).scaleY(1f).setDuration(110).start() }.start()
+        restart()
+    }
+    /** Technical lens chooser kept for tests in Diagnostik. It is not saved; flipping returns to the merged camera. */
+    private fun chooseTestLens(onChosen: ()->Unit) {
+        if(locked()) return
+        val mainCamera=cameras.firstOrNull { !it.front && !it.physical }
+        val options=cameras.withIndex().filter { (_,c) -> !duplicatesMain(c,mainCamera) }
+        AlertDialog.Builder(this).setTitle("Lensa teknis (uji)").setSingleChoiceItems(options.map { it.value.label }.toTypedArray(),options.indexOfFirst { it.index==cameraIndex }) { dialog,which ->
+            cameraIndex=options[which].index
+            controls=Controls(stabilization=prefs.getInt("stabilization",-1));focusA=0f;focusB=0f
+            dialog.dismiss();onChosen();restart()
         }.setNegativeButton("Tutup",null).show()
+    }
+    /** A physical lens that is the same optics as the main camera (for example ID 7) only repeats it in the chooser. */
+    private fun duplicatesMain(c: CameraEntry,main: CameraEntry?): Boolean {
+        if(main==null || !c.physical || c.front) return false
+        val a=c.equivalentFocal;val b=main.equivalentFocal
+        return a>0f && b>0f && kotlin.math.abs(a-b)/b<.03f
     }
     private fun chooseQuality() {
         if(locked()) return
@@ -487,9 +610,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             addView(button("Tutup","close-lut") { closeColors() },LinearLayout.LayoutParams(dp(64),dp(38)))
         })
         val lookRow=LinearLayout(this)
-        arrayOf("Natural","Hangat","Teal","Mono").forEachIndexed { index,name ->
+        lookNames.forEachIndexed { index,name ->
             val b=button(name,"look-$index") { lut=null;lutName="";look=index;persistGrade();onStatus("Warna: $name") }
-            lookButtons.add(b);lookRow.addView(b,LinearLayout.LayoutParams(dp(88),dp(40)).apply { rightMargin=dp(5) })
+            lookButtons.add(b);lookRow.addView(b,LinearLayout.LayoutParams(dp(if(index>=4) 104 else 88),dp(40)).apply { rightMargin=dp(5) })
         }
         panel.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled=false;addView(lookRow) })
         val import=button("＋ Impor .cube","import-lut") {
@@ -742,14 +865,50 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         panel.addView(text("Audio: ${audioLabel()} · ${audioMode.label}\nPengolah suara: ${if(AudioProcessor.available) "tersedia" else "tidak tersedia"}\nZoom: ${String.format(Locale.US,"%.1f×",controls.zoom)}",13f))
         val timing=attempt?.let { runCatching { JSONObject(it).optJSONObject("recorderTiming") }.getOrNull() }
         timing?.let { panel.addView(text("Percobaan terakhir: ${it.optString("audioModeLabel")}\nInput aktif: ${it.optJSONObject("actualInput")?.optString("name") ?: "belum diverifikasi"}\nKanal: ${it.optInt("channels")} · Level masuk: ${it.optJSONArray("inputRmsDbfs")} dBFS\nLevel keluar: ${it.optJSONArray("outputRmsDbfs")} dBFS",12f,muted)) }
+        val mainCamera=cameras.firstOrNull { !it.front && !it.physical }
         cameras.forEach { c ->
-            panel.addView(text("${c.label} · zoom ${c.zoomMin}–${c.zoomMax}×\nSensor ${c.rotation}° · fokus 0–${c.minFocus} D\nOIS ${c.ois} · EIS ${c.eis}\nAVC: ${c.profiles(false).joinToString { it.label }}\nHEVC: ${c.profiles(true).joinToString { it.label }}\nHigh-speed 1080: ${c.highSpeedRates(1920,1080).joinToString().ifEmpty { "tidak dilaporkan" }}",13f))
+            panel.addView(text("${c.label}${if(duplicatesMain(c,mainCamera)) " (lensa sama dengan Utama)" else ""} · zoom ${c.zoomMin}–${c.zoomMax}×\nSensor ${c.rotation}° · fokus 0–${c.minFocus} D\nOIS ${c.ois} · EIS ${c.eis}\nAVC: ${c.profiles(false).joinToString { it.label }}\nHEVC: ${c.profiles(true).joinToString { it.label }}\nHigh-speed 1080: ${c.highSpeedRates(1920,1080).joinToString().ifEmpty { "tidak dilaporkan" }}",13f))
         }
-        panel.addView(button("JSON lengkap","diagnostic-json") { message("Diagnostik JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)))
+        var diagnosticDialog: AlertDialog?=null
+        panel.addView(button("Pilih lensa teknis (uji)","test-lens") { diagnosticDialog?.dismiss();chooseTestLens {} },LinearLayout.LayoutParams(-1,dp(46)))
+        panel.addView(button("Uji telefoto (±20 detik)","tele-probe") { diagnosticDialog?.dismiss();runTelephotoProbe() },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
+        panel.addView(button("JSON lengkap","diagnostic-json") { message("Diagnostik JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
         panel.addView(button("Ekspor JSON","export-diagnostic") {
             startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"CherryVideo-diagnostik.json") },101)
         },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
-        sheet("Diagnostik",panel)
+        diagnosticDialog=sheet("Diagnostik",panel)
+    }
+    /** Releases the app's camera, lets [TelephotoProbe] investigate every candidate lens, then restarts the camera. */
+    private fun runTelephotoProbe() {
+        if(locked() || probing) return
+        if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) { onError("Berikan izin Kamera melalui Pengaturan Android dahulu.");return }
+        probing=true;record.isEnabled=false
+        onStatus("Menguji telefoto… jangan tutup aplikasi (±20 detik).")
+        val old=engine
+        if(old==null) startProbe() else { engine=null;retiringEngines++;old.close { retiringEngines--;startProbe() } }
+    }
+    private fun startProbe() {
+        val app=applicationContext
+        io.execute {
+            val result=runCatching { TelephotoProbe.run(app) }
+            main.post {
+                probing=false
+                if(isDestroyed) return@post
+                result.onSuccess { json -> showProbeResult(json) }.onFailure { e -> onError("Uji telefoto gagal: ${e.message}") }
+                restart()
+            }
+        }
+    }
+    private fun showProbeResult(json: JSONObject) {
+        exportJson=json.toString(2)
+        runCatching { File(filesDir,"telephoto-probe.json").writeText(exportJson) }
+        val panel=body().apply { tag="probe-result" }
+        panel.addView(text(json.optString("summary","Tidak ada ringkasan."),14f).apply { setTextIsSelectable(true) })
+        panel.addView(button("JSON lengkap","probe-json") { message("Uji telefoto · JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(8) })
+        panel.addView(button("Ekspor JSON","probe-export") {
+            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"CherryVideo-uji-telefoto.json") },101)
+        },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
+        sheet("Hasil uji telefoto",panel)
     }
     private fun showGallery() {
         if(locked()) return

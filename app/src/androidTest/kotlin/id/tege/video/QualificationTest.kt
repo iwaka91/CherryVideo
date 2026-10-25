@@ -17,7 +17,10 @@ import android.media.MediaMuxer
 import android.media.MediaCodec
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import androidx.test.core.app.ActivityScenario
@@ -69,16 +72,16 @@ class QualificationTest {
             await("Camera not ready: ${activity.engine?.lastError}") { activity.engine?.isReady==true }
             screenshot("simple-portrait.png")
             scenario.onActivity {
-                assertTrue("Simple must start active",it.window.decorView.findViewWithTag<Button>("mode-simple").isSelected)
-                assertFalse(it.window.decorView.findViewWithTag<Button>("mode-pro").isSelected)
+                assertFalse("Simpel must start active",it.window.decorView.findViewWithTag<android.widget.Switch>("mode-pro").isChecked)
+                assertEquals("PRO badge must be hidden in Simpel",View.GONE,it.window.decorView.findViewWithTag<View>("pro-badge").visibility)
             }
-            tap(activity,"mode-pro")
             tap(activity,"more")
+            instrumentation.runOnMainSync { activity.window.decorView.findViewWithTag<android.widget.Switch>("mode-pro").performClick() }
             scenario.onActivity {
                 val proRow=it.window.decorView.findViewWithTag<Button>("focus").parent.parent as View
                 assertEquals(View.VISIBLE,proRow.visibility)
-                assertTrue("Pro must be the active switch position",it.window.decorView.findViewWithTag<Button>("mode-pro").isSelected)
-                assertFalse(it.window.decorView.findViewWithTag<Button>("mode-simple").isSelected)
+                assertTrue("Pro switch must be on",it.window.decorView.findViewWithTag<android.widget.Switch>("mode-pro").isChecked)
+                assertEquals("PRO badge must show in Pro",View.VISIBLE,it.window.decorView.findViewWithTag<View>("pro-badge").visibility)
                 assertEquals(View.VISIBLE,it.window.decorView.findViewWithTag<View>("control-host").let { host -> (host as android.view.ViewGroup).getChildAt(0).visibility })
             }
             assertTrue("Pro mode must persist",context.getSharedPreferences("tege",0).getBoolean("pro",false))
@@ -307,6 +310,90 @@ class QualificationTest {
             assertFalse(UiDevice.getInstance(instrumentation).findObject(UiSelector().textContains("TERMS AND CONDITIONS")).exists())
             screenshot("about.png")
         }
+    }
+    private fun pinch(scenario: ActivityScenario<MainActivity>,spread: Boolean) {
+        var cx=0f;var cy=0f
+        lateinit var decor: View
+        scenario.onActivity {
+            decor=it.window.decorView
+            val preview=decor.findViewWithTag<View>("viewfinder");val at=IntArray(2);preview.getLocationInWindow(at)
+            cx=at[0]+preview.width/2f;cy=at[1]+preview.height/2f
+        }
+        val from=if(spread) 40f else 220f;val to=if(spread) 220f else 40f
+        val downTime=SystemClock.uptimeMillis()
+        fun send(action: Int,gap: Float,pointers: Int) {
+            val properties=Array(pointers) { i -> MotionEvent.PointerProperties().apply { id=i;toolType=MotionEvent.TOOL_TYPE_FINGER } }
+            val coords=Array(pointers) { i -> MotionEvent.PointerCoords().apply { x=cx+if(i==0) -gap else gap;y=cy;pressure=1f;size=1f } }
+            val event=MotionEvent.obtain(downTime,SystemClock.uptimeMillis(),action,pointers,properties,coords,0,0,1f,1f,0,0,InputDevice.SOURCE_TOUCHSCREEN,0)
+            // Dispatch from the window root so the real parent/child touch-target logic is exercised.
+            instrumentation.runOnMainSync { decor.dispatchTouchEvent(event);event.recycle() }
+        }
+        send(MotionEvent.ACTION_DOWN,from,1)
+        send(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),from,2)
+        for(step in 1..14) { send(MotionEvent.ACTION_MOVE,from+(to-from)*step/14f,2);Thread.sleep(16) }
+        send(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),to,2)
+        send(MotionEvent.ACTION_UP,to,1)
+    }
+    @Test fun twoFingerPinchZoomsThroughRealTouchDispatchAndKeepsRecording() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var activity: MainActivity;scenario.onActivity { activity=it }
+            await("Camera not ready: ${activity.engine?.lastError}") { activity.engine?.isReady==true }
+            org.junit.Assume.assumeTrue("Emulated camera exposes no usable zoom range",activity.engine!!.entry.zoomMax>1.4f && !activity.engine!!.profile.highSpeed)
+            val start=activity.engine?.reportedZoom ?: 1f
+            pinch(scenario,true)
+            await("Spreading two fingers must zoom in",15000) { (activity.engine?.reportedZoom ?: 1f)>start+.15f }
+            val zoomedIn=activity.engine?.reportedZoom ?: 1f
+            pinch(scenario,false)
+            await("Pinching two fingers together must zoom out",15000) { (activity.engine?.reportedZoom ?: 99f)<zoomedIn-.15f }
+            tap(activity,"record")
+            await("Recorder did not start") { activity.engine?.isRecording==true }
+            val before=activity.engine?.reportedZoom ?: 1f
+            pinch(scenario,true)
+            await("Zoom while recording must still change",15000) { (activity.engine?.reportedZoom ?: 1f)>before+.1f }
+            assertTrue("Zoom must not stop the recording",activity.engine?.isRecording==true)
+            tap(activity,"record")
+            await("No finalized video after zooming while recording") { activity.lastSaved!=null }
+        }
+    }
+    @Test fun flipButtonSwitchesBetweenBackAndFrontCamera() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var activity: MainActivity;scenario.onActivity { activity=it }
+            await("Camera not ready: ${activity.engine?.lastError}") { activity.engine?.isReady==true }
+            var flippable=false
+            scenario.onActivity { flippable=it.window.decorView.findViewWithTag<Button>("lens").isEnabled }
+            org.junit.Assume.assumeTrue("Needs a front and a back camera",flippable)
+            assertFalse("Starts on the back camera",activity.engine!!.entry.front)
+            tap(activity,"lens")
+            await("Front camera did not open: ${activity.engine?.lastError}") { activity.engine?.isReady==true && activity.engine?.entry?.front==true }
+            assertEquals("front",context.getSharedPreferences("tege",0).getString("facing",null))
+            scenario.onActivity { assertTrue(it.window.decorView.findViewWithTag<Button>("lens").text.startsWith("Depan")) }
+            tap(activity,"lens")
+            await("Back camera did not reopen: ${activity.engine?.lastError}") { activity.engine?.isReady==true && activity.engine?.entry?.front==false }
+            assertEquals("back",context.getSharedPreferences("tege",0).getString("facing",null))
+        }
+    }
+    @Test fun cinematicLooksCompileOnGpuAndChangeColors() {
+        val reader=ImageReader.newInstance(320,240,PixelFormat.RGBA_8888,4)
+        reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))
+        var failure: String?=null
+        val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
+        try {
+            renderer.resize(320,240,0,false)
+            val pixels=HashMap<Int,IntArray>()
+            for(look in listOf(0,4,5)) {
+                renderer.grade(null,1f,false,look)
+                val canvas=renderer.input.lockCanvas(null);canvas.drawColor(Color.rgb(200,120,60));renderer.input.unlockCanvasAndPost(canvas)
+                Thread.sleep(350)
+                pixels[look]=renderer.centerPixel()
+            }
+            assertNull("GL renderer failure",failure)
+            val natural=pixels.getValue(0)
+            for(look in listOf(4,5)) {
+                val graded=pixels.getValue(look)
+                val difference=(0..2).sumOf { kotlin.math.abs(graded[it]-natural[it]) }
+                assertTrue("Cinematic look $look must change the colors: ${graded.toList()} vs ${natural.toList()}",difference>12)
+            }
+        } finally { renderer.close();reader.close() }
     }
     private fun verifyBadTimelineIsRejected(original: File) {
         val bad=File(context.cacheDir,"bad-clock.mp4")
