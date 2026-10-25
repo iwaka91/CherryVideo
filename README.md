@@ -4,6 +4,8 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 ![Android qualification](https://github.com/iwaka91/CherryVideo/actions/workflows/android.yml/badge.svg)
 
+[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — keputusan pengujian 25 Oktober 2026; fokus zoom dua jari dan kontrol Simpel | Pro. Daftar ini belum merupakan fitur yang sudah selesai.
+
 ## Update 0.3.0
 
 - Audio: Natural (tanpa DSP tambahan aplikasi), Suara Jernih, Reduksi Kuat. Dua preset memakai SpeexDSP dengan batas peredaman -12/-28 dB; angka ini parameter, bukan jaminan hasil. Penguatan otomatis aplikasi tidak digunakan. Efek NS/AGC sistem dicoba nonaktifkan; status sebenarnya dilaporkan.
