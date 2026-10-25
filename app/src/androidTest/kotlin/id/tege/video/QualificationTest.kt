@@ -342,6 +342,17 @@ class QualificationTest {
         }
         return value
     }
+    private fun pinchState(activity: MainActivity): String {
+        var text=""
+        instrumentation.runOnMainSync {
+            val d=activity.window.decorView
+            val note=d.findViewWithTag<android.widget.TextView>("zoom-note")
+            val view=d.findViewWithTag<View>("viewfinder")
+            val seek=d.findViewWithTag<View>("zoom-slider")
+            text="note=${note?.visibility}/'${note?.text}' preview=${view?.width}x${view?.height} focus=${activity.hasWindowFocus()} detail='${d.findViewWithTag<android.widget.TextView>("detail")?.text}' seek=${seek?.isEnabled}"
+        }
+        return text
+    }
     @Test fun twoFingerPinchZoomsThroughRealTouchDispatchAndKeepsRecording() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             lateinit var activity: MainActivity;scenario.onActivity { activity=it }
@@ -349,7 +360,8 @@ class QualificationTest {
             org.junit.Assume.assumeTrue("Emulated camera exposes no usable zoom range",activity.engine!!.entry.zoomMax>1.4f && !activity.engine!!.profile.highSpeed)
             val start=shownZoom(activity)
             pinch(scenario,true)
-            await("Spreading two fingers must zoom in (start=$start shown=${shownZoom(activity)} reported=${activity.engine?.reportedZoom} max=${activity.engine?.entry?.zoomMax} busy=${activity.engine?.busy})",15000) { shownZoom(activity)>start+.15f }
+            try { await("Spreading two fingers must zoom in",15000) { shownZoom(activity)>start+.15f } }
+            catch(e: AssertionError) { throw AssertionError("${e.message} start=$start shown=${shownZoom(activity)} reported=${activity.engine?.reportedZoom} max=${activity.engine?.entry?.zoomMax} busy=${activity.engine?.busy} ${pinchState(activity)}") }
             val zoomedIn=shownZoom(activity)
             pinch(scenario,false)
             await("Pinching two fingers together must zoom out (zoomedIn=$zoomedIn shown=${shownZoom(activity)})",15000) { shownZoom(activity)<zoomedIn-.15f }
