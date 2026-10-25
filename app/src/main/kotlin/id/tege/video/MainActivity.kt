@@ -883,7 +883,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
         var diagnosticDialog: AlertDialog?=null
         panel.addView(button("Pilih lensa teknis (uji)","test-lens") { diagnosticDialog?.dismiss();chooseTestLens {} },LinearLayout.LayoutParams(-1,dp(46)))
-        panel.addView(button("Uji telefoto (±20 detik)","tele-probe") { diagnosticDialog?.dismiss();runTelephotoProbe() },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
+        panel.addView(button("Uji telefoto (±40 detik)","tele-probe") { diagnosticDialog?.dismiss();runTelephotoProbe() },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
         panel.addView(button("JSON lengkap","diagnostic-json") { message("Diagnostik JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
         panel.addView(button("Ekspor JSON","export-diagnostic") {
             startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"CherryVideo-diagnostik.json") },101)
@@ -895,7 +895,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(locked() || probing) return
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) { onError("Berikan izin Kamera melalui Pengaturan Android dahulu.");return }
         probing=true;record.isEnabled=false
-        onStatus("Menguji telefoto… jangan tutup aplikasi (±20 detik).")
+        onStatus("Menguji telefoto… jangan tutup aplikasi (±40 detik).")
         val old=engine
         if(old==null) startProbe() else { engine=null;retiringEngines++;old.close { retiringEngines--;startProbe() } }
     }

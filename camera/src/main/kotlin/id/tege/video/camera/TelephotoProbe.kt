@@ -46,6 +46,13 @@ object TelephotoProbe {
         @Volatile var focal: Float?=null;@Volatile var crop: String?=null;val done=CountDownLatch(1) }
     private class SessionResult(val json: JSONObject,val observations: List<ZoomObservation>)
 
+    /** Zoom ratios to test for one camera: its own minimum, then 1x, 1.5x, 2x ... 10x, limited to what it supports. */
+    private fun sweepRatios(c: C?): List<Float> {
+        val range=if(Build.VERSION.SDK_INT>=30) c?.get(C.CONTROL_ZOOM_RATIO_RANGE) else null
+        val minZoom=range?.lower ?: 1f;val maxZoom=range?.upper ?: (c?.get(C.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f)
+        return listOf(minZoom,1f,1.5f,2f,2.4f,3f,4f,5f,7f,10f).filter { it>=minZoom-.001f && it<=maxZoom+.001f }
+            .map { ZoomPolicy.clamp(it,minZoom,maxZoom) }.distinct()
+    }
     private fun describe(e: Throwable)="${e.javaClass.simpleName}: ${e.message}"
     private fun focalMm(c: C): Float? = c[C.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]?.minOrNull()
     private fun equivalent(c: C): Float? {
@@ -127,15 +134,27 @@ object TelephotoProbe {
             // Stage: does the main (logical) camera switch lenses while zooming?
             var verdictText="Kamera utama tidak ditemukan, uji zoom dilewati."
             if(mainId!=null) {
-                val range=if(Build.VERSION.SDK_INT>=30) chars[mainId]?.get(C.CONTROL_ZOOM_RATIO_RANGE) else null
-                val minZoom=range?.lower ?: 1f;val maxZoom=range?.upper ?: (chars[mainId]?.get(C.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f)
-                val ratios=(listOf(minZoom,1f,1.5f,2f,2.4f,3f,4f,5f,7f,10f)).filter { it>=minZoom-.001f && it<=maxZoom+.001f }.map { ZoomPolicy.clamp(it,minZoom,maxZoom) }.distinct()
+                val ratios=sweepRatios(chars[mainId])
                 val sweep=runSession(manager,handler,mainId,null,ratios)
                 val verdict=LensSwitchAnalysis.analyze(sweep.observations)
                 verdictText=verdict.text
                 report.put("zoomSweep",sweep.json.put("verdict",JSONObject().put("switched",verdict.switched)
                     .put("firstSwitchZoom",verdict.firstSwitchZoom?.toDouble() ?: JSONObject.NULL).put("text",verdict.text)))
             }
+
+            // Stage: hidden multi-lens cameras (for example an id that groups ultrawide, main and telephoto).
+            val hiddenSweeps=JSONArray();val hiddenTexts=ArrayList<String>()
+            (hiddenReadable+teleLike).distinct().filter { id -> id !in listed && (chars[id]?.physicalCameraIds?.isNotEmpty()==true) }.forEach { id ->
+                val sweep=runSession(manager,handler,id,null,sweepRatios(chars[id]))
+                val verdict=LensSwitchAnalysis.analyze(sweep.observations)
+                val lenses=sweep.observations.mapNotNull { it.physicalId }.distinct()
+                hiddenSweeps.put(sweep.json.put("verdict",JSONObject().put("switched",verdict.switched)
+                    .put("firstSwitchZoom",verdict.firstSwitchZoom?.toDouble() ?: JSONObject.NULL).put("text",verdict.text)
+                    .put("lensesSeen",JSONArray(lenses))))
+                hiddenTexts.add("ID $id (sapuan zoom): "+if(sweep.observations.none { it.frames>0 }) "tidak ada frame." else "lensa terlihat ${lenses.joinToString().ifEmpty { "-" }}; ${verdict.text}")
+                Thread.sleep(200)
+            }
+            report.put("hiddenSweeps",hiddenSweeps)
 
             val lines=ArrayList<String>()
             lines.add("ID kamera yang dilaporkan Android: ${listed.joinToString()}")
@@ -152,6 +171,7 @@ object TelephotoProbe {
                     if(p.optBoolean("framesReceived")) "preview jalan." else "gagal — ${p.optString("error","tanpa keterangan")}")
             }
             lines.add(verdictText)
+            hiddenTexts.forEach { lines.add(it) }
             lines.add("Catatan: ini bukti perilaku kamera di sesi aplikasi ini. Rekaman nyata diuji lewat Diagnostik → Pilih lensa teknis.")
             report.put("summary",lines.joinToString("\n"))
         } catch(e: Throwable) {

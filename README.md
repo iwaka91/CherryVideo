@@ -4,7 +4,7 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 ![Android qualification](https://github.com/iwaka91/CherryVideo/actions/workflows/android.yml/badge.svg)
 
-[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status 0.3.2-beta dan rencana Cinematic Look / Bokeh AI.
+[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status 0.3.2-beta2 dan rencana Cinematic Look / Bokeh AI.
 
 ## Update 0.3.2
 

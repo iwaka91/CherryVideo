@@ -4,7 +4,22 @@ Tanggal keputusan: **25 Oktober 2026**. Basis pemeriksaan: **0.3.0-beta**, Xiaom
 
 Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplikasi di bawah belum diimplementasikan.** Pembuatan dokumen ini tidak menjadi perintah untuk langsung mengerjakan seluruh catatan. Baca ruang lingkup terbaru sebelum melanjutkan di sesi lain.
 
-## Status terbaru — 0.3.2-beta
+## Status terbaru — 0.3.2-beta2
+
+**Hasil uji pengguna pada 0.3.2-beta (Xiaomi 13T, 25 Okt 2026):** cubit zoom, tombol 0.6×, sakelar Pro, dan LUT Cinematic 1 dan 2 berfungsi. Tombol 2× tetap tidak berpindah ke kamera tele.
+
+**Temuan Uji telefoto (bukti dari HP):**
+- ID tersembunyi **2** = telefoto (fokus 7,1 mm, sekitar 2× kamera utama); preview terbuka dan frame masuk bila dibuka langsung.
+- ID tersembunyi **4** = kamera logis gabungan (lensa fisik 2, 3, 7; zoom 0,6×–20×); preview terbuka. ID 5 (lensa 2 + 7, zoom 1×–4×) dan ID 6 juga terbuka.
+- Kamera 0 yang dipakai aplikasi **tidak pernah berpindah ke tele** sampai zoom 10× (lensa aktif tetap 7). Zoom 2× hanya memotong gambar lensa utama.
+- Belum terbukti: apakah ID 4 berpindah ke tele saat zoom ≥2×, dan apakah perekaman video dari ID tersembunyi diizinkan.
+
+**0.3.2-beta2 (versionCode 8):** Uji telefoto kini juga menyapu zoom pada setiap kamera logis tersembunyi (misalnya ID 4) dan mencatat lensa fisik yang terlihat. Cubit zoom memakai hitungan jarak dua jari sendiri (detektor bawaan Android tidak aktif pada sentuhan uji). CI kini menampilkan ringkasan uji emulator yang gagal sebagai anotasi.
+
+**Rencana berikut (0.3.3), urutan:** (0) bila sapuan ID 4 membuktikan perpindahan ke tele: pakai ID 4 sebagai "Belakang" dengan cadangan ke ID 0 dan uji rekam; lencana lensa aktif (UW/1×/Tele). (1) Panel bawah untuk Fokus/Pull, Exposure, WB (tidak menutupi preview). (2) Ketuk untuk fokus; tahan lama untuk kunci AE/AF; buka kunci dengan ketuk atau tombol "Buka kunci"; geser naik/turun mengatur terang. Kunci tidak tersedia pada 60 fps high-speed dan tidak dipakai saat fokus/exposure manual Pro. Titik fokus hanya bisa dibuktikan di HP.
+
+### Riwayat — 0.3.2-beta
+
 
 Hasil uji pengguna pada 0.3.1-beta (Xiaomi 13T): cubit tidak berfungsi; kamera utama sudah berpindah ke wide otomatis di zoom 0.6 (sama seperti kamera bawaan); telefoto tidak pernah aktif sampai zoom 10×; peralihan Simpel ↔ Pro kurang terasa.
 
