@@ -99,7 +99,7 @@ class QualificationTest {
                 stamp>0 && System.nanoTime()-stamp in 0L..250_000_000L
             }
             tap(activity,"record")
-            await("No finalized camera video: ${activity.engine?.lastError}") { activity.lastSaved!=null }
+            await("No finalized camera video: ${activity.engine?.lastError} recording=${activity.engine?.isRecording} busy=${activity.engine?.busy} attempt=${runCatching { File(context.filesDir,"last-recording-attempt.json").readText().replace(Regex("\\s+")," ").take(500) }.getOrNull()}") { activity.lastSaved!=null }
             val saved=activity.lastSaved!!
             assertTrue(saved.report.getInt("frames")>=12)
             assertTrue(saved.report.getBoolean("audio"))
