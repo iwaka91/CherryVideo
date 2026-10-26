@@ -19,3 +19,9 @@ Original source headers and COPYING retained under camera/src/main/cpp/speexdsp.
 Binary redistribution notices are included in app assets/SPEEXDSP-LICENSE.
 Cherry adds Android/JNI framing, independent channel state, two attenuation
 presets, explicit gain-control policy, and delay/tail compensation.
+
+MediaPipe Tasks Vision (com.google.mediapipe:tasks-vision 0.10.14) and the
+Selfie Segmenter model, Copyright Google LLC, Apache License 2.0.
+Source: https://github.com/google-ai-edge/mediapipe
+Used only by the "Uji Bokeh" diagnostic; runs on the device without internet.
+The model file is downloaded at build time by tools/fetch_models.sh.

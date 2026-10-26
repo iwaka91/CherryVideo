@@ -844,6 +844,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         panel.addView(text("Komponen open source",16f,gold))
         panel.addView(text("CubeLut dan FocusPull diadaptasi dari OpenCineCam.\nCopyright 2026 OpenCineCam contributors.\nApache License 2.0.",14f))
         panel.addView(text("Peredam suara: SpeexDSP, lisensi BSD. Pemrosesan lokal di perangkat.",14f))
+        panel.addView(text("Uji Bokeh: MediaPipe Tasks Vision dan model Selfie Segmenter.\nCopyright Google LLC.\nApache License 2.0. Berjalan di perangkat, tanpa internet.",14f))
         panel.addView(button("Lisensi SpeexDSP","speex-license") { message("Lisensi SpeexDSP",assets.open("SPEEXDSP-LICENSE").bufferedReader().use { it.readText() }) },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Source Cherry Video","source-link") { openLink("https://github.com/iwaka91/CherryVideo") },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Source OpenCineCam","upstream-link") { openLink("https://github.com/LibreStatic/opencinecam") },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(6) })
@@ -884,6 +885,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         var diagnosticDialog: AlertDialog?=null
         panel.addView(button("Pilih lensa teknis (uji)","test-lens") { diagnosticDialog?.dismiss();chooseTestLens {} },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Uji telefoto (±40 detik)","tele-probe") { diagnosticDialog?.dismiss();runTelephotoProbe() },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
+        panel.addView(button("Uji Bokeh (±15 detik)","bokeh-probe") { diagnosticDialog?.dismiss();runBokehProbe() },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
         panel.addView(button("JSON lengkap","diagnostic-json") { message("Diagnostik JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
         panel.addView(button("Ekspor JSON","export-diagnostic") {
             startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"CherryVideo-diagnostik.json") },101)
@@ -891,36 +893,42 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         diagnosticDialog=sheet("Diagnostik",panel)
     }
     /** Releases the app's camera, lets [TelephotoProbe] investigate every candidate lens, then restarts the camera. */
-    private fun runTelephotoProbe() {
+    private fun runTelephotoProbe()=runProbe(ProbeKind("Uji telefoto","Hasil uji telefoto","Menguji telefoto… jangan tutup aplikasi (±40 detik).",
+        "telephoto-probe.json","CherryVideo-uji-telefoto.json") { TelephotoProbe.run(it) })
+    /** Releases the app's camera, lets [BokehProbe] measure on-device person segmentation (no recording), then restarts the camera. */
+    private fun runBokehProbe()=runProbe(ProbeKind("Uji Bokeh","Hasil uji Bokeh","Uji Bokeh… arahkan kamera belakang ke orang, jangan tutup aplikasi (±15 detik).",
+        "bokeh-probe.json","CherryVideo-uji-bokeh.json") { BokehProbe.run(it) })
+    private class ProbeKind(val name: String,val resultTitle: String,val status: String,val saveName: String,val exportName: String,val task: (Context)->JSONObject)
+    private fun runProbe(kind: ProbeKind) {
         if(locked() || probing) return
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) { onError("Berikan izin Kamera melalui Pengaturan Android dahulu.");return }
         probing=true;record.isEnabled=false
-        onStatus("Menguji telefoto… jangan tutup aplikasi (±40 detik).")
+        onStatus(kind.status)
         val old=engine
-        if(old==null) startProbe() else { engine=null;retiringEngines++;old.close { retiringEngines--;startProbe() } }
+        if(old==null) startProbe(kind) else { engine=null;retiringEngines++;old.close { retiringEngines--;startProbe(kind) } }
     }
-    private fun startProbe() {
+    private fun startProbe(kind: ProbeKind) {
         val app=applicationContext
         io.execute {
-            val result=runCatching { TelephotoProbe.run(app) }
+            val result=runCatching { kind.task(app) }
             main.post {
                 probing=false
                 if(isDestroyed) return@post
-                result.onSuccess { json -> showProbeResult(json) }.onFailure { e -> onError("Uji telefoto gagal: ${e.message}") }
+                result.onSuccess { json -> showProbeResult(kind,json) }.onFailure { e -> onError("${kind.name} gagal: ${e.message}") }
                 restart()
             }
         }
     }
-    private fun showProbeResult(json: JSONObject) {
+    private fun showProbeResult(kind: ProbeKind,json: JSONObject) {
         exportJson=json.toString(2)
-        runCatching { File(filesDir,"telephoto-probe.json").writeText(exportJson) }
+        runCatching { File(filesDir,kind.saveName).writeText(exportJson) }
         val panel=body().apply { tag="probe-result" }
         panel.addView(text(json.optString("summary","Tidak ada ringkasan."),14f).apply { setTextIsSelectable(true) })
-        panel.addView(button("JSON lengkap","probe-json") { message("Uji telefoto · JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(8) })
+        panel.addView(button("JSON lengkap","probe-json") { message("${kind.name} · JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(8) })
         panel.addView(button("Ekspor JSON","probe-export") {
-            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"CherryVideo-uji-telefoto.json") },101)
+            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,kind.exportName) },101)
         },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
-        sheet("Hasil uji telefoto",panel)
+        sheet(kind.resultTitle,panel)
     }
     private fun showGallery() {
         if(locked()) return

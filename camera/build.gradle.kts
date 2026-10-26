@@ -12,4 +12,8 @@ android {
     kotlinOptions { jvmTarget = "17" }
     lint { abortOnError = true }
 }
-dependencies { api(project(":core")) }
+dependencies {
+    api(project(":core"))
+    // On-device person segmentation for "Uji Bokeh" (Apache License 2.0). Model is fetched by tools/fetch_models.sh.
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
+}

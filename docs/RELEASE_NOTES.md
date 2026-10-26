@@ -1,3 +1,5 @@
+Cherry Video 0.3.2 beta3 — tombol Uji Bokeh di Pengaturan → Diagnostik: segmentasi orang MediaPipe di dalam HP (tanpa internet) diukur ±15 detik pada GPU lalu CPU (waktu per gambar, FPS, suhu). Tidak merekam dan tidak mengubah pengaturan. Lisensi MediaPipe (Apache 2.0) di Tentang. versionCode 9. Fitur lain sama seperti 0.3.2 beta2.
+
 Cherry Video 0.3.2 beta2 — Uji telefoto menyapu zoom pada kamera logis tersembunyi (misalnya ID 4); cubit zoom memakai hitungan jarak dua jari sendiri; ringkasan kegagalan uji di CI. versionCode 8. Fitur lain sama seperti 0.3.2 beta di bawah.
 
 Cherry Video 0.3.2 beta — zoom dua jari, kamera Belakang/Depan, Simpel | Pro di Lainnya, LUT Cinematic, uji telefoto.

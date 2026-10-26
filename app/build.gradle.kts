@@ -7,8 +7,8 @@ android {
         applicationId = "id.tege.video"
         minSdk = 29
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.3.2-beta2"
+        versionCode = 9
+        versionName = "0.3.2-beta3"
         manifestPlaceholders["appLabel"] = "Cherry Video"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -27,6 +27,8 @@ android {
     }
     lint { abortOnError = true; checkDependencies = true }
     testOptions { animationsDisabled = true }
+    // MediaPipe ships 32-bit x86 libraries the app does not otherwise support; keep the APK small.
+    packaging { jniLibs { excludes += setOf("lib/x86/libmediapipe_tasks_vision_jni.so") } }
 }
 dependencies {
     implementation(project(":camera"))

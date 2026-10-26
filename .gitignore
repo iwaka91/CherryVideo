@@ -8,3 +8,4 @@ local.properties
 
 **/.cxx/
 __pycache__/
+app/src/main/assets/selfie_segmenter.tflite

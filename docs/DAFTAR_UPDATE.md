@@ -8,7 +8,7 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Keputusan pengguna:** zoom 2× tetap potong digital (opsi C); kamera tele tidak dipakai (Xiaomi tidak memberi perpindahan otomatis; ID 2 hanya terbuka langsung). Fokus berikutnya: Bokeh AI.
 
-**Langkah 1 — Uji Bokeh (diagnostik, tanpa merekam; menunggu perintah "Update Kode").** Tombol di Pengaturan → Diagnostik. Memuat MediaPipe (segmentasi orang, di dalam HP, tanpa internet) dan mengukur waktu proses per gambar, FPS, dan suhu selama ±15 detik. Tidak mengubah rekaman.
+**Langkah 1 — Uji Bokeh (diagnostik, tanpa merekam) — dikerjakan di 0.3.2-beta3, menunggu uji Xiaomi.** Tombol di Pengaturan → Diagnostik. Memuat MediaPipe (segmentasi orang, di dalam HP, tanpa internet) dan mengukur waktu proses per gambar, FPS, dan suhu selama ±15 detik. Tidak mengubah rekaman.
 
 **Langkah 2 — Bokeh langsung + penghalusan tepi + Cinematic Look.**
 - Tombol "Bokeh (eksperimen)", mati secara bawaan; sakelar dan slider kekuatan blur. Hanya orang; hanya 1080p 30 fps ke bawah (720p 30 fps ikut). Mode 60 fps dan 4K tidak mengaktifkan Bokeh.
@@ -21,7 +21,19 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Catatan:** hasil emulator tidak membuktikan kecepatan atau kualitas Bokeh di Xiaomi 13T. Semua langkah menunggu perintah eksplisit ("Update Kode") sebelum kode diubah.
 
-## Status terbaru — 0.3.2-beta2
+## Status terbaru — 0.3.2-beta3 (Langkah 1: Uji Bokeh)
+
+**Selesai di kode (belum diuji di Xiaomi; emulator hanya membuktikan model termuat dan gambar terproses, bukan kecepatan):**
+- Tombol **Uji Bokeh (±15 detik)** di Pengaturan → Diagnostik (`BokehProbe.kt`). Kamera aplikasi dilepas dulu seperti Uji telefoto, lalu dibuka lagi.
+- Kamera belakang dibuka dengan aliran 1080p 30 fps (dibuang, pengganti beban rekaman) plus **aliran gambar kecil tambahan** (640x360 bila tersedia) ke MediaPipe segmentasi orang (model Selfie Segmenter, di dalam APK).
+- Diukur bergantian: **GPU ±10 detik, lalu CPU ±5 detik**. Dicatat: waktu per gambar (rata-rata, terlambat 10%, maksimum; konversi dan segmentasi terpisah), FPS diproses vs fps kamera, area orang terdeteksi, suhu baterai, status panas, dan headroom panas per detik. 5 gambar awal tiap tahap tidak dihitung (pemanasan).
+- Hasil: ringkasan Indonesia + JSON lengkap + Ekspor JSON (`CherryVideo-uji-bokeh.json`). Tidak merekam dan tidak mengubah pengaturan.
+- Model diunduh saat build oleh CI (`tools/fetch_models.sh`); aplikasi tidak pernah mengunduh. Lisensi MediaPipe (Apache 2.0) di Tentang dan NOTICE. Pustaka MediaPipe x86 32-bit tidak ikut APK.
+- Versi 0.3.2-beta3 (versionCode 9). Paket `id.tege.video.hotfix` dan kunci uji tidak berubah.
+
+**Yang perlu Bapak uji di HP:** buka Pengaturan → Diagnostik → **Uji Bokeh**, arahkan kamera belakang ke orang selama ±15 detik, lalu kirim JSON-nya. Langkah 2 belum dimulai.
+
+## Riwayat — 0.3.2-beta2
 
 **Hasil uji pengguna pada 0.3.2-beta (Xiaomi 13T, 25 Okt 2026):** cubit zoom, tombol 0.6×, sakelar Pro, dan LUT Cinematic 1 dan 2 berfungsi. Tombol 2× tetap tidak berpindah ke kamera tele.
 

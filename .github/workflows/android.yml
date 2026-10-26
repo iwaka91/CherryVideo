@@ -46,6 +46,8 @@ jobs:
           mkdir -p build/device-evidence
           gcc -O2 -shared -fPIC -DFLOATING_POINT -DUSE_SMALLFT -DEXPORT= -Icamera/src/main/cpp/speexdsp/include -Icamera/src/main/cpp/speexdsp/libspeexdsp camera/src/main/cpp/cherry_denoiser.c camera/src/main/cpp/speexdsp/libspeexdsp/{preprocess,mdf,fftwrap,filterbank,smallft}.c -lm -o build/libcherry_audio_host.so
           python3 tools/check_audio.py "$PWD/build/libcherry_audio_host.so" > build/device-evidence/audio-host.json
+      - name: Fetch on-device segmentation model
+        run: bash tools/fetch_models.sh
       - name: Compile, lint and JVM tests
         run: bash gradlew --no-daemon :core:test :camera:lintDebug :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Enable KVM
@@ -88,9 +90,9 @@ jobs:
       - name: Package only qualified APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/Cherry-Video-0.3.2-beta2.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Cherry-Video-0.3.2-beta3.apk
           sha256sum dist/*.apk > dist/SHA256SUMS.txt
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/Cherry-Video-0.3.2-beta2.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/Cherry-Video-0.3.2-beta3.apk
       - name: Upload passing APK
         uses: actions/upload-artifact@v4
         with:
@@ -101,7 +103,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "test-${{ github.run_number }}" dist/* --prerelease --title "Cherry Video 0.3.2 beta2 · internal gates passed" --notes-file docs/RELEASE_NOTES.md
+          gh release create "test-${{ github.run_number }}" dist/* --prerelease --title "Cherry Video 0.3.2 beta3 · internal gates passed" --notes-file docs/RELEASE_NOTES.md
       - name: Upload evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4
