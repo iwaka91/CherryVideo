@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.ImageFormat
 import android.hardware.camera2.*
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
@@ -37,6 +38,8 @@ interface CameraListener {
     fun onRecording(active: Boolean)
     fun onSaved(video: SavedVideo)
     fun onError(message: String)
+    /** Short, non-fatal message (for example Bokeh was switched off). */
+    fun onNotice(message: String) {}
 }
 
 /** Camera and recorder ownership live on one serial executor. GL owns only surfaces and grading. */
@@ -60,12 +63,19 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private var look=0
     private var recordAudio=false
     private var requestedAudio=0
+    private var maskStream: PersonMaskStream?=null
+    private var bokehStrength=.6f
+    private var grain=0f
+    private var vignette=0f
+    private var barsOn=false
+    private var barsInVideo=false
     private var recordingStartNs=0L
     private val focus=FocusPullSession()
     private var exposureInfo=""
     @Volatile var activePhysicalId: String?=null; private set
     @Volatile var appliedZoom=1f; private set
     @Volatile var reportedZoom: Float?=null; private set
+    @Volatile var bokehActive=false; private set
     @Volatile var isReady=false; private set
     @Volatile var isRecording=false; private set
     @Volatile var busy=false; private set
@@ -76,12 +86,14 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     lateinit var profile: VideoProfile; private set
     var hevc=false; private set
     val previewStats: JSONObject get() = renderer?.stats ?: JSONObject()
+    val renderedFrames: Long get() = renderer?.renderedFrames ?: 0L
+    val bokehInfo: JSONObject get() = (maskStream?.info() ?: JSONObject()).put("active",bokehActive)
     val lastEncodedTimestampNs: Long get() = renderer?.lastEncodedTimestampNs ?: 0L
     val capturedAudioFrames: Long get() = recorder?.capturedAudioFrames ?: 0L
     private fun ui(block: ()->Unit) { main.post(block) }
     private fun error(message: String) { lastError=message;Log.e("TeGeVideo",message);ui { listener.onError(message) } }
     @SuppressLint("MissingPermission")
-    fun open(camera: CameraEntry,p: VideoProfile,h265: Boolean,surface: Surface,w: Int,h: Int,rotation: Int) {
+    fun open(camera: CameraEntry,p: VideoProfile,h265: Boolean,surface: Surface,w: Int,h: Int,rotation: Int,bokeh: Boolean=false,bokehLevel: Float=.6f) {
         handler.post {
             if(closing) return@post
             entry=camera;profile=p;hevc=h265;orientation=rotation
@@ -97,9 +109,11 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                             isReady=true
                             ui { listener.onReady(entry);listener.onStatus("Siap · ${profile.label}${if(profile.highSpeed) " · high-speed, uji FPS aktual" else ""}") }
                         }
-                    } }) { message -> handler.post {
+                    } },onNotice={ message -> ui { listener.onNotice(message) } }) { message -> handler.post {
                     if(!closing) { if(isRecording) stopInternal();error(message) }
                 } }.apply { resize(w,h,rotation,entry.front) }
+                bokehStrength=bokehLevel
+                if(bokeh) setupBokeh(rotation)
                 val manager=context.getSystemService(CameraManager::class.java)
                 manager.openCamera(entry.openId,object: CameraDevice.StateCallback() {
                     override fun onOpened(camera: CameraDevice) {
@@ -115,6 +129,37 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             } catch(e: Exception) { error(e.cause?.message ?: e.message ?: "Gagal membuka kamera.");releaseCamera() }
         }
     }
+    /** Live Bokeh adds a small second camera stream for the person mask; only for profiles BokehPolicy allows. */
+    private fun setupBokeh(rotation: Int) {
+        val why=BokehPolicy.reason(profile,entry.physical)
+        if(why!=null) { ui { listener.onNotice(why) };return }
+        val sizes=entry.characteristics[C.SCALER_STREAM_CONFIGURATION_MAP]?.getOutputSizes(ImageFormat.YUV_420_888)?.map { it.width to it.height }.orEmpty()
+        val small=BokehPolicy.smallSize(sizes,profile.width,profile.height)
+        if(small==null) { ui { listener.onNotice("Kamera tidak menawarkan aliran kecil untuk Bokeh. Bokeh dimatikan.") };return }
+        val stream=PersonMaskStream(context,android.util.Size(small.first,small.second),
+            onMask={ data,maskW,maskH,presence -> renderer?.submitMask(data,maskW,maskH,presence) },
+            onProblem={ message -> handler.post { disableBokeh(message) } })
+        stream.degrees=rotation
+        maskStream=stream
+        renderer?.bokeh(true,bokehStrength)
+        bokehActive=true
+    }
+    /** Runtime failure: show the sharp picture again. The stream stays attached (and keeps draining) so the camera session is not disturbed. */
+    private fun disableBokeh(message: String) {
+        if(!bokehActive) return
+        bokehActive=false
+        runCatching { renderer?.bokeh(false,bokehStrength) }
+        ui { listener.onNotice(message) }
+    }
+    fun setBokehStrength(value: Float) { handler.post {
+        bokehStrength=value.coerceIn(0f,1f)
+        if(bokehActive) runCatching { renderer?.bokeh(true,bokehStrength) }
+    } }
+    fun effects(grainAmount: Float,vignetteAmount: Float,bars: Boolean,inVideo: Boolean) { handler.post {
+        if(isRecording || busy) return@post
+        grain=grainAmount;vignette=vignetteAmount;barsOn=bars;barsInVideo=inVideo
+        runCatching { renderer?.effects(grainAmount,vignetteAmount,bars,inVideo) }
+    } }
     private fun createSession() {
         val camera=device ?: return
         val input=renderer?.input ?: return
@@ -123,11 +168,27 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 if(closing) { value.close();return }
                 session=value
                 try {
-                    request=camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply { addTarget(input) }
+                    request=camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                        addTarget(input)
+                        maskStream?.let { addTarget(it.surface) }
+                    }
                     applyControls()
                 } catch(e: Exception) { error(e.message ?: "Konfigurasi kamera gagal.") }
             }
-            override fun onConfigureFailed(value: CameraCaptureSession) { value.close();error("Kamera menolak sesi video ${profile.label}.") }
+            override fun onConfigureFailed(value: CameraCaptureSession) {
+                value.close()
+                val extra=maskStream
+                if(extra!=null && !closing) {
+                    // The camera refused video + mask stream together: continue without Bokeh.
+                    maskStream=null;bokehActive=false
+                    runCatching { renderer?.bokeh(false,bokehStrength) }
+                    runCatching { extra.close() }
+                    ui { listener.onNotice("Kamera menolak Bokeh bersama video ini. Bokeh dimatikan.") }
+                    runCatching { createSession() }.onFailure { failure -> releaseCamera();error("Sesi kamera gagal: ${failure.message}") }
+                    return
+                }
+                error("Kamera menolak sesi video ${profile.label}.")
+            }
         }
         val output=OutputConfiguration(input)
         if(entry.physical) output.setPhysicalCameraId(entry.id)
@@ -136,8 +197,10 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             output.setTimestampBase(OutputConfiguration.TIMESTAMP_BASE_MONOTONIC)
             output.setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
         }
+        val outputs=ArrayList<OutputConfiguration>().apply { add(output) }
+        maskStream?.let { outputs.add(OutputConfiguration(it.surface)) }
         camera.createCaptureSession(SessionConfiguration(if(profile.highSpeed) SessionConfiguration.SESSION_HIGH_SPEED else SessionConfiguration.SESSION_REGULAR,
-            listOf(output),java.util.concurrent.Executor { handler.post(it) },callback))
+            outputs,java.util.concurrent.Executor { handler.post(it) },callback))
     }
     private fun applyControls() {
         val b=request ?: return
@@ -220,6 +283,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     } }
     fun resize(w: Int,h: Int,rotation: Int) { handler.post {
         if(!isRecording) orientation=rotation
+        maskStream?.degrees=rotation
         runCatching { renderer?.resize(w,h,rotation,entry.front) }
     } }
     fun start(audioSource: Int,audioMode: AudioMode=AudioMode.NATURAL,audioDeviceId: Int=0) { handler.post {
@@ -241,7 +305,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             encoderSurface=rec.surface
             rec.start()
             recordingStartNs=System.nanoTime()
-            renderer!!.attachEncoder(encoderSurface!!,rec.epochNs)
+            renderer!!.attachEncoder(encoderSurface!!,rec.epochNs,orientation)
             isRecording=true;busy=false;ui { listener.onRecording(true) }
         } catch(e: Exception) {
             runCatching { renderer?.detachEncoder() };runCatching { recorder?.release() };recorder=null
@@ -289,6 +353,8 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                     .put("zoom",appliedZoom.toDouble()).put("reportedZoom",reportedZoom?.toDouble() ?: JSONObject.NULL).put("device","${Build.MANUFACTURER} ${Build.MODEL}")
                     .put("androidApi",Build.VERSION.SDK_INT).put("lutSha256",lut?.sha256 ?: JSONObject.NULL)
                     .put("look",look).put("strength",intensity.toDouble()).put("baked",bake)
+                    .put("bokehActive",bokehActive).put("bokehStrength",bokehStrength.toDouble()).put("bokeh",bokehInfo)
+                    .put("grain",grain.toDouble()).put("vignette",vignette.toDouble()).put("bars",barsOn).put("barsInVideo",barsInVideo)
                     .put("audioSourceRequest",requestedAudio).put("lastSensorExposure",exposureInfo)
                     .put("captureFps",profile.captureFps).put("highSpeed",profile.highSpeed).put("preview",previewStats)
                     .put("encoderSubmission",submission).put("recorderTiming",timing)
@@ -306,6 +372,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private fun releaseCamera() {
         isReady=false;focus.cancel();session?.close();session=null;device?.close();device=null
         runCatching { renderer?.close() };renderer=null
+        runCatching { maskStream?.close() };maskStream=null;bokehActive=false
     }
     fun close(onClosed: ()->Unit = {}) {
         if(closing) return

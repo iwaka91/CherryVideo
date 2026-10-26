@@ -86,6 +86,24 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var look=0
     private var strength=1f
     private var bake=true
+    // Live Bokeh and Cinematic Look. The two switches start off at every launch; strengths and choices are remembered.
+    private var bokeh=false
+    private var bokehStrength=.6f
+    private var cinema=false
+    private var cinemaLook=4
+    private var cinemaStrength=.7f
+    private var cinemaBars=false
+    private var cinemaBarsInVideo=false
+    private lateinit var bokehButton: Button
+    private lateinit var cinemaButton: Button
+    private lateinit var banner: TextView
+    private val hot=HotStopTimer()
+    private var hotText: String?=null
+    private var fpsText: String?=null
+    private var fpsMarkAt=0L
+    private var fpsMarkFrames=0L
+    private var fpsLow=0
+    private val hotStartMessage="HP panas, dinginkan HP dulu sebelum mulai merekam."
     private var focusA=0f
     private var focusB=0f
     private var pullDuration=2500L
@@ -100,16 +118,19 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     @Volatile var engine: CameraEngine?=null; private set
     @Volatile var lastSaved: SavedVideo?=null; private set
     private val thermalListener=PowerManager.OnThermalStatusChangedListener { value ->
+        val wasBlocked=ThermalPolicy.blocksStart(thermal)
         thermal=value
-        if(value>=PowerManager.THERMAL_STATUS_SEVERE && engine?.isRecording==true) {
-            engine?.stop();onStatus("Rekaman dihentikan untuk suhu perangkat. Video sedang disimpan.")
-        }
+        if(value>=ThermalPolicy.STOP_NOW && engine?.isRecording==true) {
+            engine?.stop();onStatus("Rekaman dihentikan karena HP terlalu panas. Video sedang disimpan.")
+        } else if(!wasBlocked && ThermalPolicy.blocksStart(value) && engine?.isRecording!=true) flashNote(hotStartMessage)
+        updateHotUi()
     }
     private val clock=object: Runnable {
         override fun run() {
             if(!resumed) return
             val e=engine
             syncZoomFromCamera(e)
+            tickHot(e);tickFps(e)
             if(e?.isRecording==true) {
                 val elapsed=(SystemClock.elapsedRealtime()-recordingSince)/1000
                 val amp=e.amplitude()
@@ -118,7 +139,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
                 if(StatFs(filesDir.path).availableBytes<150L*1024*1024) e.stop()
             } else if(!uiRecording) {
                 val fps=e?.previewStats?.optDouble("previewSubmittedFps",0.0) ?: 0.0
-                detail.text="${if(fps>0) String.format(Locale.US,"Preview %.0f fps · ",fps) else ""}${if(bake) "Warna ke video" else "LUT pratinjau"} · ${storageLabel()} · ${thermalLabel()}"
+                detail.text="${if(fps>0) String.format(Locale.US,"Preview %.0f fps · ",fps) else ""}${if(bake || cinema) "Warna ke video" else "LUT pratinjau"} · ${storageLabel()} · ${thermalLabel()}"
             }
             main.postDelayed(this,500)
         }
@@ -131,6 +152,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         audioMode=AudioMode.fromOrdinal(prefs.getInt("audioMode",0));audioDeviceId=prefs.getInt("audioDeviceId",0)
         selected=VideoProfile(prefs.getInt("width",1920),prefs.getInt("height",1080),prefs.getInt("fps",30),prefs.getInt("captureFps",30))
         look=prefs.getInt("look",0);strength=prefs.getFloat("strength",1f);bake=prefs.getBoolean("bake",true)
+        bokehStrength=prefs.getFloat("bokehStrength",.6f).coerceIn(0f,1f)
+        cinemaLook=if(prefs.getInt("cinemaLook",4)==5) 5 else 4;cinemaStrength=prefs.getFloat("cinemaStrength",.7f).coerceIn(0f,1f)
+        cinemaBars=prefs.getBoolean("cinemaBars",false);cinemaBarsInVideo=prefs.getBoolean("cinemaBarsInVideo",false)
         val stored=prefs.getString("lut",null)
         if(stored!=null) runCatching { lut=CubeLut.parse(File(filesDir,"luts/$stored.cube").readBytes());lutName=prefs.getString("lutName","LUT Saya").orEmpty() }
         cameras=runCatching { CameraCatalog.list(this) }.getOrDefault(emptyList())
@@ -220,12 +244,17 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             tag="zoom-note";visibility=View.GONE;gravity=Gravity.CENTER
             background=shape(Color.argb(190,0,0,0),14);setPadding(dp(12),dp(8),dp(12),dp(8))
         }
+        banner=text("",13f,Color.WHITE).apply {
+            tag="banner";visibility=View.GONE;gravity=Gravity.CENTER
+            background=shape(Color.argb(215,150,40,30),14);setPadding(dp(12),dp(7),dp(12),dp(7))
+        }
         chipKey="";chipViews.clear()
         val frame=FrameLayout(this).apply {
             addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1))
             addView(detail,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply { setMargins(dp(8),dp(8),dp(8),0) })
             addView(zoomOverlay,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
             addView(note,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER).apply { setMargins(dp(16),0,dp(16),0) })
+            addView(banner,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { setMargins(dp(16),dp(40),dp(16),0) })
         }
         val panel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL };normalControls=panel
         controlHost=FrameLayout(this).apply { tag="control-host";addView(panel) }
@@ -273,6 +302,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
         colors=button("Warna / LUT","colors") { showColors() }
         stable=button("Stabilisasi","stabilization") { showStabilization() }
+        bokehButton=button("Bokeh (eksperimen)","bokeh") { showBokeh() }
+        cinemaButton=button("Cinematic","cinematic") { showCinema() }
         audioButton=button("Audio","audio") { showAudio() }
         val settings=button("Pengaturan","settings") { showSettings() }
         proRow=LinearLayout(this).apply {
@@ -287,6 +318,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
                 if(colorDock) closeColors()
                 val e=engine ?: return@setOnClickListener
                 if(e.isRecording) { record.isEnabled=false;onStatus("Menyimpan dan memeriksa video…");e.stop() }
+                else if(ThermalPolicy.blocksStart(thermal)) flashNote(hotStartMessage)
                 else if(e.isReady && !e.busy) { record.isEnabled=false;onStatus("Memulai rekaman…");e.start(audio,audioMode,audioDeviceId) }
             }
         }
@@ -300,7 +332,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
         // "Lainnya" drawer: secondary controls stay one tap away so the preview keeps most of the screen.
         panel.addView(modeSwitch,LinearLayout.LayoutParams(-1,dp(46)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
-        panel.addView(row(colors,stable));panel.addView(proRow);panel.addView(row(audioButton,settings))
+        panel.addView(row(colors,stable));panel.addView(row(bokehButton,cinemaButton));panel.addView(proRow);panel.addView(row(audioButton,settings))
         val side=if(landscape) 64 else 84
         val recordRow=LinearLayout(this).apply {
             gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(6),0,dp(2))
@@ -379,6 +411,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         stable.text="Stabilisasi · ${stabilizationLabel()}";stable.contentDescription=stable.text
         audioButton.text="Audio · ${audioLabel()}${if(audio!=0) "\n${audioMode.label}" else ""}";audioButton.contentDescription=audioButton.text
         colorTitle?.text="${gradeLabel()} · ${(strength*100).toInt()}%"
+        bokehButton.text="Bokeh (eksperimen)\n${bokehState()}";bokehButton.contentDescription=bokehButton.text
+        cinemaButton.text="Cinematic\n${if(cinema) "Aktif" else "Mati"}";cinemaButton.contentDescription=cinemaButton.text
         lookButtons.forEachIndexed { index,b ->
             val active=lut==null && look==index
             b.isSelected=active;b.background=shape(if(active) gold else Color.rgb(34,42,47),10)
@@ -407,8 +441,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         prefs.edit().putInt("width",selected.width).putInt("height",selected.height).putInt("fps",selected.fps).putInt("captureFps",selected.captureFps).apply()
         updateSelectionLabels()
         val e=CameraEngine(applicationContext,this);engine=e
-        e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation())
-        e.update(controls);e.grade(lut,strength,bake,look)
+        val useBokeh=bokeh && BokehPolicy.eligible(selected,camera.physical)
+        if(bokeh && !useBokeh) BokehPolicy.reason(selected,camera.physical)?.let { flashNote(it) }
+        e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation(),useBokeh,bokehStrength)
+        e.update(controls);applyGrade(e)
     }
     private fun setZoom(ratio: Float) {
         val camera=cameras.getOrNull(cameraIndex) ?: return
@@ -484,6 +520,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     override fun onResume() {
         super.onResume();resumed=true
         getSystemService(PowerManager::class.java).apply { thermal=currentThermalStatus;addThermalStatusListener(mainExecutor,thermalListener) }
+        updateHotUi()
+        if(ThermalPolicy.blocksStart(thermal)) main.post { flashNote(hotStartMessage) }
         main.post { startCamera() };main.post(clock)
     }
     override fun onPause() {
@@ -522,7 +560,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         record.isEnabled=engine?.isReady==true
         modeSwitch.isEnabled=!active;modeSwitch.alpha=if(active) .5f else 1f
         lens.isEnabled=!active && hasBothFacings();quality.isEnabled=!active;colors.isEnabled=!active
-        if(active) onStatus("Merekam · ${selected.label} · ${if(bake) "warna tersimpan" else "LUT pratinjau"}")
+        bokehButton.isEnabled=!active;cinemaButton.isEnabled=!active
+        if(!active) { hot.reset();hotText=null;renderBanner() }
+        updateHotUi()
+        if(active) onStatus("Merekam · ${selected.label} · ${if(bake || cinema) "warna tersimpan" else "LUT pratinjau"}")
     }
     override fun onSaved(video: SavedVideo) {
         lastSaved=video
@@ -532,6 +573,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     override fun onError(message: String) {
         android.util.Log.e("TeGeVideo",message);stickyError=message
         if(!isDestroyed) { status.text=message;record.isEnabled=engine?.isReady==true;Toast.makeText(this,message,Toast.LENGTH_LONG).show() }
+    }
+    override fun onNotice(message: String) {
+        android.util.Log.w("TeGeVideo",message)
+        main.post { if(!isDestroyed) flashNote(message) }
     }
     private fun locked(): Boolean {
         if(engine?.isRecording==true || engine?.busy==true) { Toast.makeText(this,"Selesaikan rekaman dahulu.",Toast.LENGTH_SHORT).show();return true };return false
@@ -609,8 +654,146 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun persistGrade() {
         prefs.edit().putInt("look",look).putFloat("strength",strength).putBoolean("bake",bake).putString("lut",lut?.sha256).putString("lutName",lutName).apply()
-        engine?.grade(lut,strength,bake,look)
+        applyGrade()
         updateSelectionLabels()
+    }
+    /** While Cinematic is on it supplies the look, grain, vignette and bars; otherwise the normal Warna / LUT choice applies, unchanged. */
+    private fun applyGrade(target: CameraEngine?=engine) {
+        val e=target ?: return
+        if(cinema) {
+            e.grade(null,cinemaStrength,true,cinemaLook)
+            e.effects(CinematicMath.grain(cinemaStrength),CinematicMath.vignette(cinemaStrength),cinemaBars,cinemaBarsInVideo)
+        } else {
+            e.grade(lut,strength,bake,look)
+            e.effects(0f,0f,false,false)
+        }
+    }
+    private fun bokehReason(): String? {
+        val camera=cameras.getOrNull(cameraIndex) ?: return "Kamera belum siap."
+        return BokehPolicy.reason(selected,camera.physical)
+    }
+    private fun bokehState(): String = when {
+        !bokeh -> "Mati"
+        bokehReason()!=null -> "Tidak aktif di profil ini"
+        else -> "Aktif"
+    }
+    /** Turning Bokeh on or off changes the camera streams, so the camera restarts for a moment. */
+    private fun setBokeh(value: Boolean) {
+        if(value==bokeh) return
+        if(locked()) return
+        bokeh=value
+        updateSelectionLabels()
+        restart()
+    }
+    /** Opens a dock in the control area (the preview stays visible), the same way Warna / LUT does. */
+    private fun openDock(panel: LinearLayout) {
+        lookButtons.clear();colorTitle=null
+        controlHost.removeAllViews()
+        if(resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE) controlHost.addView(panel)
+        else {
+            controlHost.layoutParams.height=dp(260)
+            controlHost.addView(ScrollView(this).apply { addView(panel) },FrameLayout.LayoutParams(-1,-1))
+        }
+        colorDock=true;controlHost.requestLayout()
+    }
+    private fun dockHeader(title: String,titleTag: String,closeTag: String): LinearLayout = LinearLayout(this).apply {
+        gravity=Gravity.CENTER_VERTICAL
+        addView(text(title,14f,gold).apply { tag=titleTag;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END },LinearLayout.LayoutParams(0,dp(38),1f))
+        addView(button("Tutup",closeTag) { closeColors() },LinearLayout.LayoutParams(dp(64),dp(38)))
+    }
+    private fun showBokeh() {
+        if(locked()) return
+        val why=bokehReason()
+        val panel=body()
+        panel.tag="bokeh-dock"
+        panel.addView(dockHeader("Bokeh (eksperimen)","bokeh-title","close-bokeh"))
+        check(panel,"Bokeh latar (hanya orang)",bokeh && why==null,why==null) { value -> setBokeh(value) }
+        slider(panel,"Kekuatan blur ${(bokehStrength*100).toInt()}%",(bokehStrength*100).toInt(),100) { value,label ->
+            bokehStrength=value/100f;label.text="Kekuatan blur $value%"
+            prefs.edit().putFloat("bokehStrength",bokehStrength).apply();engine?.setBokehStrength(bokehStrength)
+        }
+        panel.addView(text(why ?: "Latar diburamkan, orang tetap tajam. Hanya 1080p atau 720p 30 fps; 60 fps dan 4K tidak memakai Bokeh. Mengubah sakelar memulai ulang kamera sebentar. Bila tidak ada orang di gambar, video tetap tajam.",12f,muted))
+        openDock(panel)
+    }
+    private fun showCinema() {
+        if(locked()) return
+        val panel=body()
+        panel.tag="cinema-dock"
+        panel.addView(dockHeader("Cinematic","cinema-title","close-cinema"))
+        check(panel,"Cinematic Look",cinema) { value ->
+            cinema=value;persistCinema();onStatus(if(value) "Cinematic aktif" else "Cinematic mati")
+        }
+        val looks=ArrayList<Pair<Int,Button>>()
+        fun refreshLooks() { looks.forEach { (id,b) ->
+            val on=cinemaLook==id
+            b.background=shape(if(on) gold else Color.rgb(34,42,47),10);b.setTextColor(if(on) Color.rgb(16,19,21) else Color.WHITE)
+        } }
+        val lookRow=LinearLayout(this)
+        listOf("Cinematic 1" to 4,"Cinematic 2" to 5).forEach { (name,id) ->
+            val b=button(name,"cinema-look-$id") { cinemaLook=id;persistCinema();refreshLooks() }
+            looks.add(id to b);lookRow.addView(b,LinearLayout.LayoutParams(0,dp(40),1f).apply { rightMargin=dp(5) })
+        }
+        refreshLooks()
+        panel.addView(lookRow)
+        slider(panel,"Kekuatan ${(cinemaStrength*100).toInt()}%",(cinemaStrength*100).toInt(),100) { value,label ->
+            cinemaStrength=value/100f;label.text="Kekuatan $value%";persistCinema()
+        }
+        check(panel,"Bilah 2,39:1 di preview",cinemaBars) { value ->
+            cinemaBars=value;persistCinema()
+            panel.findViewWithTag<View>("cinema-bars-video")?.isEnabled=value
+        }
+        check(panel,"Bilah ikut masuk ke video",cinemaBarsInVideo,cinemaBars) { value -> cinemaBarsInVideo=value;persistCinema() }
+        panel.getChildAt(panel.childCount-1).tag="cinema-bars-video"
+        panel.addView(text("Cinematic menambah warna film, grain, dan vinyet tipis; semuanya ikut masuk ke video. Saat Cinematic aktif, pilihan Warna / LUT disimpan dan dipakai kembali setelah Cinematic dimatikan.",12f,muted))
+        openDock(panel)
+    }
+    private fun persistCinema() {
+        prefs.edit().putInt("cinemaLook",cinemaLook).putFloat("cinemaStrength",cinemaStrength)
+            .putBoolean("cinemaBars",cinemaBars).putBoolean("cinemaBarsInVideo",cinemaBarsInVideo).apply()
+        applyGrade();updateSelectionLabels()
+    }
+    private fun renderBanner() {
+        if(!::banner.isInitialized) return
+        val shown=hotText ?: fpsText
+        banner.text=shown ?: ""
+        banner.visibility=if(shown==null) View.GONE else View.VISIBLE
+    }
+    /** Recording: severe heat starts a 30 second countdown, then the video is stopped and saved. */
+    private fun tickHot(e: CameraEngine?) {
+        if(e?.isRecording==true) {
+            val state=hot.update(thermal,SystemClock.elapsedRealtime())
+            when(state.action) {
+                HotAction.COUNTING -> hotText="HP panas, video akan dimatikan dalam ${state.remainingSeconds} detik"
+                HotAction.STOP -> {
+                    hotText=null;hot.reset();e.stop()
+                    onStatus("Rekaman dihentikan karena HP panas. Video sedang disimpan.")
+                }
+                HotAction.NONE -> hotText=null
+            }
+        } else { hot.reset();hotText=null }
+        renderBanner();updateHotUi()
+    }
+    /** While recording with Bokeh: warning text only when the real frame rate drops well below the chosen one. */
+    private fun tickFps(e: CameraEngine?) {
+        if(e==null || !e.isRecording || !e.bokehActive) {
+            fpsMarkAt=0L;fpsLow=0
+            if(fpsText!=null) { fpsText=null;renderBanner() }
+            return
+        }
+        val now=SystemClock.elapsedRealtime();val frames=e.renderedFrames
+        if(fpsMarkAt==0L) { fpsMarkAt=now;fpsMarkFrames=frames;return }
+        val elapsed=now-fpsMarkAt
+        if(elapsed<1500) return
+        val fps=(frames-fpsMarkFrames)*1000.0/elapsed
+        fpsMarkAt=now;fpsMarkFrames=frames
+        if(fps<selected.fps*.85) fpsLow++ else fpsLow=0
+        val warn=if(fpsLow>=2) String.format(Locale.US,"FPS turun: %.0f dari %d. Rekaman bisa tersendat.",fps,selected.fps) else null
+        if(warn!=fpsText) { fpsText=warn;renderBanner() }
+    }
+    /** On the home screen the record button looks dimmed (but stays tappable) while the phone is hot. */
+    private fun updateHotUi() {
+        if(!::record.isInitialized) return
+        (record as? RecordButton)?.softLocked=!uiRecording && ThermalPolicy.blocksStart(thermal)
     }
     private fun showColors() {
         if(locked()) return
@@ -829,7 +1012,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
         check(panel,"Grid komposisi",grid.enabledGrid) { grid.enabledGrid=it;grid.invalidate() }
         check(panel,"Lampu kontinu",controls.torch,cameras.getOrNull(cameraIndex)?.characteristics?.get(C.FLASH_INFO_AVAILABLE)==true) { controls=controls.copy(torch=it);engine?.update(controls) }
-        panel.addView(text("Penyimpanan: Movies/CherryVideo\n${storageLabel()}\nSaat aplikasi masuk latar atau layar dikunci, rekaman dihentikan dan disimpan. Jaga aplikasi tetap terbuka untuk merekam. Suhu berat dan ruang menipis memicu penyimpanan otomatis.",13f,muted))
+        panel.addView(text("Penyimpanan: Movies/CherryVideo\n${storageLabel()}\nSaat aplikasi masuk latar atau layar dikunci, rekaman dihentikan dan disimpan. Jaga aplikasi tetap terbuka untuk merekam. Suhu berat memberi hitungan mundur 30 detik sebelum rekaman disimpan otomatis; suhu kritis dan ruang menipis menyimpan segera. Saat HP panas, rekaman baru tidak bisa dimulai sampai suhu turun.",13f,muted))
         panel.addView(button("Diagnostik perangkat & FPS","diagnostics") { showDiagnostics() },LinearLayout.LayoutParams(-1,dp(48)))
         val about=button("Tentang Cherry Video","about") {}
         panel.addView(about,LinearLayout.LayoutParams(-1,dp(48)).apply { topMargin=dp(5) })
@@ -844,7 +1027,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         panel.addView(text("Komponen open source",16f,gold))
         panel.addView(text("CubeLut dan FocusPull diadaptasi dari OpenCineCam.\nCopyright 2026 OpenCineCam contributors.\nApache License 2.0.",14f))
         panel.addView(text("Peredam suara: SpeexDSP, lisensi BSD. Pemrosesan lokal di perangkat.",14f))
-        panel.addView(text("Uji Bokeh: MediaPipe Tasks Vision dan model Selfie Segmenter.\nCopyright Google LLC.\nApache License 2.0. Berjalan di perangkat, tanpa internet.",14f))
+        panel.addView(text("Bokeh dan Uji Bokeh: MediaPipe Tasks Vision dan model Selfie Segmenter.\nCopyright Google LLC.\nApache License 2.0. Berjalan di perangkat, tanpa internet.",14f))
         panel.addView(button("Lisensi SpeexDSP","speex-license") { message("Lisensi SpeexDSP",assets.open("SPEEXDSP-LICENSE").bufferedReader().use { it.readText() }) },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Source Cherry Video","source-link") { openLink("https://github.com/iwaka91/CherryVideo") },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Source OpenCineCam","upstream-link") { openLink("https://github.com/LibreStatic/opencinecam") },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(6) })
@@ -867,7 +1050,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             .put("audioModeSelected",audioMode.name).put("requestedAudioDeviceId",audioDeviceId)
             .put("zoomSelected",controls.zoom.toDouble()).put("zoomApplied",engine?.appliedZoom?.toDouble())
             .put("activePhysicalId",engine?.activePhysicalId ?: JSONObject.NULL)
-            .put("physicalCameras",CameraCatalog.physicalReport(this,cameras)).put("preview",engine?.previewStats)
+            .put("physicalCameras",CameraCatalog.physicalReport(this,cameras)).put("preview",engine?.previewStats).put("bokeh",engine?.bokehInfo ?: JSONObject.NULL)
             .put("selectedCamera",cameras.getOrNull(cameraIndex)?.id).put("selectedProfile",selected.label).put("codec",if(hevc) "HEVC" else "AVC")
             .put("lastRecording",last?.let { JSONObject(it) } ?: JSONObject.NULL)
             .put("lastRecordingAttempt",attempt?.let { JSONObject(it) } ?: JSONObject.NULL).toString(2)
@@ -959,7 +1142,11 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
 
 /** Round shutter control; dims itself while the camera is not ready. */
 private class RecordButton(context: Context): Button(context) {
-    override fun setEnabled(enabled: Boolean) { super.setEnabled(enabled);alpha=if(enabled) 1f else .45f }
+    /** Dimmed but still tappable, so a tap can explain why recording cannot start. */
+    var softLocked=false
+        set(value) { field=value;shade() }
+    override fun setEnabled(enabled: Boolean) { super.setEnabled(enabled);shade() }
+    private fun shade() { alpha=if(isEnabled && !softLocked) 1f else .45f }
 }
 
 private class GridOverlay(context: Context): View(context) {

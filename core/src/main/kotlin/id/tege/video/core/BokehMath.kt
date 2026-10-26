@@ -24,6 +24,24 @@ object YuvToArgb {
             }
         }
     }
+    /** Same colour maths as [convert], but writes the picture turned clockwise by [degrees] so a person is upright for the model. */
+    fun convertUpright(y: ByteArray,yRowStride: Int,u: ByteArray,v: ByteArray,uvRowStride: Int,uvPixelStride: Int,width: Int,height: Int,degrees: Int,out: IntArray) {
+        require(out.size>=width*height) { "Output terlalu kecil." }
+        for(row in 0 until height) {
+            val yBase=row*yRowStride
+            val uvBase=(row shr 1)*uvRowStride
+            for(col in 0 until width) {
+                val yy=y[yBase+col].toInt() and 0xff
+                val uvIndex=uvBase+(col shr 1)*uvPixelStride
+                val cb=(u[uvIndex].toInt() and 0xff)-128
+                val cr=(v[uvIndex].toInt() and 0xff)-128
+                val r=yy+((1436*cr) shr 10)
+                val g=yy-((352*cb+731*cr) shr 10)
+                val b=yy+((1815*cb) shr 10)
+                out[MaskMath.uprightIndex(col,row,width,height,degrees)]=(0xff shl 24) or (clamp(r) shl 16) or (clamp(g) shl 8) or clamp(b)
+            }
+        }
+    }
     private fun clamp(x: Int)=if(x<0) 0 else if(x>255) 255 else x
 }
 

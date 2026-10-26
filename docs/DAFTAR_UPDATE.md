@@ -21,7 +21,21 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Catatan:** hasil emulator tidak membuktikan kecepatan atau kualitas Bokeh di Xiaomi 13T. Semua langkah menunggu perintah eksplisit ("Update Kode") sebelum kode diubah.
 
-## Status terbaru — 0.3.2-beta3 (Langkah 1: Uji Bokeh)
+## Status terbaru — 0.3.2-beta4 (Langkah 2: Bokeh langsung + Cinematic + peringatan panas)
+
+**Hasil Uji Bokeh di Xiaomi 13T (26 Okt 2026, 16,6 detik):** kamera 0, aliran 640x360 plus aliran 1080p 30 fps yang dibuang. GPU: rata-rata 24,2 ms (segmentasi 18,1; konversi 6,1), p90 29,4, maks 36,1, 29,7 FPS diproses dari 29,6 FPS kamera, muat 1,06 dtk. CPU: rata-rata 24,0 ms (segmentasi 18,0; konversi 5,9), p90 29,5, maks 37,3, 29,9 FPS dari 29,9, muat 21 ms. Area orang ±19% (GPU) / ±39% (CPU). Baterai 29,9 °C, suhu normal. Catatan: GPU dan CPU hampir sama (GPU mungkin tidak benar-benar dipakai); sebagian gambar melebihi 33 ms; uji tidak menggambar blur dan tidak menyimpan, jadi beban rekaman nyata dan panas rekaman panjang belum terbukti. Kesimpulan: Bokeh langsung di 1080p 30 fps layak dilanjutkan.
+
+**Selesai di kode (belum diuji di Xiaomi; kompilasi dan uji JVM hanya di CI):**
+- **Bokeh langsung:** tombol "Bokeh (eksperimen)" di Lainnya; mati secara bawaan dan mati lagi tiap aplikasi dibuka; slider kekuatan blur (tersimpan). Hanya orang, 1080p/720p 30 fps ke bawah, 16:9, bukan lensa teknis. Aliran gambar kecil 640x360 ke segmentasi MediaPipe (CPU), topeng dihaluskan terhadap waktu (kedipan, rambut), blur latar di GPU (turun ke 1/4 resolusi, 4 lintasan Gaussian) dan dipakai sama untuk preview dan video. Bila tidak ada orang di gambar, video tetap tajam. Mengubah sakelar memulai ulang kamera sebentar. Bila kamera menolak aliran tambahan atau Bokeh gagal, aplikasi jalan terus tanpa Bokeh dan memberi tahu.
+- **Cinematic:** tombol "Cinematic" (mati secara bawaan); Look Cinematic 1/2, grain, vinyet tipis, satu slider kekuatan, bilah 2,39:1 di preview dengan pilihan ikut masuk ke video. Saat aktif menggantikan pilihan Warna / LUT sementara; pilihan lama kembali setelah dimatikan.
+- **Tidak ada mati otomatis Bokeh.** Merekam + panas berat (status 3): peringatan "HP panas, video akan dimatikan dalam N detik" 30 detik, lalu rekaman berhenti, tersimpan, kembali ke beranda. Panas kritis (status 4): berhenti segera. FPS turun (<85% dua kali berturut-turut, saat Bokeh): hanya teks peringatan.
+- **Peringatan panas di beranda (semua rekaman):** status panas sedang ke atas → toast 2–3 detik "HP panas, dinginkan HP dulu sebelum mulai merekam."; tombol rekam diredupkan dan tidak memulai, tiap ketukan memunculkan peringatan lagi; terbuka kembali saat suhu turun.
+- Tentang dan Pengaturan diperbarui; Diagnostik memuat bagian "bokeh". 24 fps dan petunjuk shutter 1/48 tetap ditunda. **Langkah 3 (0.3.3) belum dikerjakan.**
+- Versi 0.3.2-beta4 (versionCode 10). Paket dan kunci uji tidak berubah.
+
+**Yang perlu Bapak uji di HP:** nyalakan Bokeh (1080p 30), rekam 1–2 menit, cek tepi rambut, suhu, FPS aktual, sinkron suara, hasil video; coba Cinematic (preview, bilah, dan hasil video); coba toast panas bila HP panas; pastikan rekaman tanpa Bokeh/Cinematic tidak berubah.
+
+## Riwayat — 0.3.2-beta3 (Langkah 1: Uji Bokeh)
 
 **Selesai di kode (belum diuji di Xiaomi; emulator hanya membuktikan model termuat dan gambar terproses, bukan kecepatan):**
 - Tombol **Uji Bokeh (±15 detik)** di Pengaturan → Diagnostik (`BokehProbe.kt`). Kamera aplikasi dilepas dulu seperti Uji telefoto, lalu dibuka lagi.
