@@ -61,7 +61,7 @@ class LiveBokehTest {
             }
         }
         assertEquals(3,MaskMath.uprightWidth(5,3,90));assertEquals(5,MaskMath.uprightHeight(5,3,90))
-        assertEquals(5,MaskMath.uprightWidth(5,3,180));assertEquals(3,MaskMath.uprightHeight(5,3,270))
+        assertEquals(5,MaskMath.uprightWidth(5,3,180));assertEquals(5,MaskMath.uprightHeight(5,3,270))
         // Clockwise 90: the bottom-left pixel of the camera image becomes the top-left pixel.
         assertEquals(0,MaskMath.uprightIndex(0,h-1,w,h,90))
         // Clockwise 270: the top-right pixel becomes the top-left pixel.
