@@ -97,6 +97,12 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private lateinit var bokehButton: Button
     private lateinit var cinemaButton: Button
     private lateinit var banner: TextView
+    private lateinit var focusRing: View
+    private lateinit var lockChip: Button
+    private var lockToken=0
+    private var savingSince=0L
+    private var savingShown=false
+    private val hideRing=Runnable { if(::focusRing.isInitialized && !controls.lock) focusRing.visibility=View.GONE }
     private val hot=HotStopTimer()
     private var hotText: String?=null
     private var fpsText: String?=null
@@ -130,7 +136,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             if(!resumed) return
             val e=engine
             syncZoomFromCamera(e)
-            tickHot(e);tickFps(e)
+            tickHot(e);tickFps(e);tickSaving(e)
             if(e?.isRecording==true) {
                 val elapsed=(SystemClock.elapsedRealtime()-recordingSince)/1000
                 val amp=e.amplitude()
@@ -205,19 +211,42 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         // down; if the first finger is refused, Android never delivers the second finger to this view.
         var lastGap=0f
         fun gapOf(event: MotionEvent): Float = if(event.pointerCount>=2) kotlin.math.hypot(event.getX(0)-event.getX(1),event.getY(0)-event.getY(1)) else 0f
+        // One finger: tap = focus here, long press = lock AE/AF, drag up/down = brightness. Two fingers = zoom.
+        val slop=ViewConfiguration.get(this).scaledTouchSlop
+        var downX=0f;var downY=0f;var lastX=0f;var lastY=0f
+        var moved=false;var longFired=false;var dragStartEv=0;var dragNoted=false
+        val longPress=Runnable { if(!pinched && !moved) { longFired=true;beginLock(lastX,lastY) } }
         preview.setOnTouchListener { view,event ->
             touchEvents++;lastTouchPointers=event.pointerCount;if(event.pointerCount>maxTouchPointers) maxTouchPointers=event.pointerCount
             when(event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { pinched=false;lastGap=0f }
-                MotionEvent.ACTION_POINTER_DOWN -> { pinched=true;lastGap=gapOf(event) }
+                MotionEvent.ACTION_DOWN -> {
+                    pinched=false;lastGap=0f;downX=event.x;downY=event.y;lastX=downX;lastY=downY
+                    moved=false;longFired=false;dragNoted=false;dragStartEv=controls.ev
+                    main.removeCallbacks(longPress);main.postDelayed(longPress,ViewConfiguration.getLongPressTimeout().toLong())
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> { pinched=true;lastGap=gapOf(event);main.removeCallbacks(longPress) }
                 MotionEvent.ACTION_POINTER_UP -> lastGap=0f
                 MotionEvent.ACTION_MOVE -> {
                     val gap=gapOf(event)
                     if(gap>0f && lastGap>0f && kotlin.math.abs(gap-lastGap)>=1f) { pinched=true;scaleBegins++;setZoom(controls.zoom*gap/lastGap);lastGap=gap }
                     else if(gap>0f && lastGap==0f) lastGap=gap
+                    if(event.pointerCount==1 && !pinched) {
+                        lastX=event.x;lastY=event.y
+                        if(!moved && kotlin.math.hypot(lastX-downX,lastY-downY)>slop) { moved=true;main.removeCallbacks(longPress) }
+                        if(moved && !longFired && kotlin.math.abs(lastY-downY)>kotlin.math.abs(lastX-downX)) {
+                            val why=brightnessBlockedReason()
+                            if(why!=null) { if(!dragNoted) { dragNoted=true;flashNote(why) } }
+                            else dragBrightness(dragStartEv,downY-lastY)
+                        }
+                    }
                 }
-                MotionEvent.ACTION_UP -> { if(!pinched) view.performClick();lastGap=0f }
-                MotionEvent.ACTION_CANCEL -> lastGap=0f
+                MotionEvent.ACTION_UP -> {
+                    main.removeCallbacks(longPress)
+                    if(!pinched && !moved && !longFired) tapFocusAt(event.x,event.y)
+                    if(!pinched) view.performClick()
+                    lastGap=0f
+                }
+                MotionEvent.ACTION_CANCEL -> { lastGap=0f;main.removeCallbacks(longPress) }
             }
             true
         }
@@ -248,6 +277,13 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             tag="banner";visibility=View.GONE;gravity=Gravity.CENTER
             background=shape(Color.argb(215,150,40,30),14);setPadding(dp(12),dp(7),dp(12),dp(7))
         }
+        focusRing=View(this).apply {
+            tag="focus-ring";visibility=View.GONE;isClickable=false;isFocusable=false
+            importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        lockChip=button("AE/AF terkunci · Buka kunci","lock-chip") { releaseLock(true) }.apply {
+            visibility=View.GONE;background=shape(Color.argb(215,24,120,70),16);setPadding(dp(14),0,dp(14),0)
+        }
         chipKey="";chipViews.clear()
         val frame=FrameLayout(this).apply {
             addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1))
@@ -255,6 +291,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             addView(zoomOverlay,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
             addView(note,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER).apply { setMargins(dp(16),0,dp(16),0) })
             addView(banner,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { setMargins(dp(16),dp(40),dp(16),0) })
+            addView(focusRing,FrameLayout.LayoutParams(dp(64),dp(64),Gravity.TOP or Gravity.START))
+            addView(lockChip,FrameLayout.LayoutParams(-2,dp(36),Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin=dp(76) })
         }
         val panel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL };normalControls=panel
         controlHost=FrameLayout(this).apply { tag="control-host";addView(panel) }
@@ -365,7 +403,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(value==pro) return true
         if(locked()) return false
         pro=value
-        if(!pro) { controls=Controls(stabilization=controls.stabilization,zoom=controls.zoom);engine?.update(controls) }
+        if(!pro) { controls=Controls(stabilization=controls.stabilization,zoom=controls.zoom);engine?.update(controls);lockToken++;updateLockUi();focusRing.visibility=View.GONE }
         prefs.edit().putBoolean("pro",pro).apply();applyModeUi()
         return true
     }
@@ -435,6 +473,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         controls=controls.copy(zoom=if(selected.highSpeed) 1f else ZoomPolicy.clamp(controls.zoom,camera.zoomMin,camera.zoomMax))
         zoomChangedAt=SystemClock.elapsedRealtime()
         updateZoomUi()
+        lockToken++;controls=controls.copy(lock=false,meterX=-1f,meterY=-1f);updateLockUi();focusRing.visibility=View.GONE
         if(controls.stabilization<0 || (controls.stabilization==1 && !camera.ois) || (controls.stabilization==2 && !camera.eis))
             controls=controls.copy(stabilization=if(camera.ois) 1 else if(camera.eis) 2 else 0)
         if(selected.highSpeed) controls=controls.copy(stabilization=0,focus=null,iso=0,shutterNs=0)
@@ -460,6 +499,104 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(!::note.isInitialized) return
         note.text=value;note.visibility=View.VISIBLE
         main.removeCallbacks(hideNote);main.postDelayed(hideNote,2600)
+    }
+    /** One place that sends the current controls to the camera; a manual focus or exposure choice releases the AE/AF lock. */
+    private fun commit() {
+        if(controls.lock && (controls.focus!=null || controls.iso>0)) { lockToken++;controls=controls.copy(lock=false);updateLockUi() }
+        engine?.update(controls)
+    }
+    /** After Stop, saving can take a while: a short "Menyimpan…" toast appears once if it is still going after about a second. */
+    private fun tickSaving(e: CameraEngine?) {
+        val saving=e!=null && uiRecording && !e.isRecording && e.busy
+        if(!saving) { savingSince=0L;savingShown=false;return }
+        val now=SystemClock.elapsedRealtime()
+        if(savingSince==0L) { savingSince=now;return }
+        if(!savingShown && now-savingSince>=1000) { savingShown=true;Toast.makeText(this,"Menyimpan…",Toast.LENGTH_SHORT).show() }
+    }
+    private fun updateLockUi() {
+        if(!::lockChip.isInitialized) return
+        lockChip.visibility=if(controls.lock) View.VISIBLE else View.GONE
+        focusRing.background=ring(if(controls.lock) green else Color.WHITE)
+    }
+    private fun ring(color: Int)=GradientDrawable().apply { shape=GradientDrawable.OVAL;setColor(Color.TRANSPARENT);setStroke(dp(2),color) }
+    private fun showRing(x: Float,y: Float) {
+        focusRing.translationX=x-dp(32);focusRing.translationY=y-dp(32)
+        focusRing.background=ring(if(controls.lock) green else Color.WHITE)
+        focusRing.visibility=View.VISIBLE
+        main.removeCallbacks(hideRing);if(!controls.lock) main.postDelayed(hideRing,1400)
+    }
+    /** Why tapping to focus cannot work right now, or null when it can. */
+    private fun focusBlockedReason(camera: CameraEntry): String? = when {
+        selected.highSpeed -> "Ketuk fokus tidak tersedia pada 60 fps high-speed."
+        controls.focus!=null -> "Fokus manual aktif. Pilih Autofocus video di panel Fokus untuk ketuk fokus."
+        (camera.characteristics[C.CONTROL_MAX_REGIONS_AF] ?: 0)<=0 && (camera.characteristics[C.CONTROL_MAX_REGIONS_AE] ?: 0)<=0 -> "Kamera ini tidak mendukung titik fokus."
+        else -> null
+    }
+    private fun lockBlockedReason(camera: CameraEntry): String? = when {
+        selected.highSpeed -> "Kunci AE/AF tidak tersedia pada 60 fps high-speed."
+        controls.focus!=null || controls.iso>0 -> "Kunci AE/AF tidak dipakai saat fokus atau exposure manual (Pro)."
+        else -> focusBlockedReason(camera)
+    }
+    private fun brightnessBlockedReason(): String? = when {
+        selected.highSpeed -> "Geser terang tidak tersedia pada 60 fps high-speed."
+        controls.iso>0 -> "Exposure manual aktif. Atur terang lewat panel Exposure."
+        controls.lock -> "Buka kunci dahulu untuk mengatur terang."
+        cameras.getOrNull(cameraIndex)?.characteristics?.get(C.CONTROL_AE_COMPENSATION_RANGE)?.let { it.upper>it.lower }!=true -> "Kamera ini tidak mendukung pengaturan terang."
+        else -> null
+    }
+    /** Screen point to a point of the whole sensor area, following rotation, mirror, letterbox and zoom crop. */
+    private fun meterPoint(x: Float,y: Float,camera: CameraEntry): Pair<Float,Float>? {
+        val active=camera.characteristics[C.SENSOR_INFO_ACTIVE_ARRAY_SIZE] ?: return null
+        val vp=TextureGeometry.viewport(preview.width,preview.height,selected.width,selected.height,rotation())
+        if(vp[2]<=0 || vp[3]<=0) return null
+        val u=(x-vp[0])/vp[2];val v=(y-vp[1])/vp[3]
+        if(u<0f || u>1f || v<0f || v>1f) return null
+        val s=TapMath.toSensor(u,v,rotation(),camera.front)
+        val crop=ZoomPolicy.crop(active.left,active.top,active.right,active.bottom,controls.zoom.coerceAtLeast(1f))
+        return TapMath.toActive(s.first,s.second,crop,active.left,active.top,active.right,active.bottom)
+    }
+    private fun tapFocusAt(x: Float,y: Float) {
+        val camera=cameras.getOrNull(cameraIndex) ?: return
+        val e=engine ?: return
+        if(!e.isReady || e.busy && !e.isRecording) return
+        if(controls.lock) { releaseLock(true);return }
+        focusBlockedReason(camera)?.let { flashNote(it);return }
+        val point=meterPoint(x,y,camera) ?: return
+        controls=controls.copy(meterX=point.first,meterY=point.second)
+        commit();showRing(x,y)
+    }
+    /** Long press: focus here, then lock AE and AF once the exposure has settled on the new spot. */
+    private fun beginLock(x: Float,y: Float) {
+        val camera=cameras.getOrNull(cameraIndex) ?: return
+        val e=engine ?: return
+        if(!e.isReady || e.busy && !e.isRecording || controls.lock) return
+        lockBlockedReason(camera)?.let { flashNote(it);return }
+        val point=meterPoint(x,y,camera) ?: return
+        controls=controls.copy(meterX=point.first,meterY=point.second)
+        commit();showRing(x,y)
+        val token=++lockToken
+        main.postDelayed({
+            if(token==lockToken && !isDestroyed && engine?.isReady==true && lockBlockedReason(camera)==null) {
+                controls=controls.copy(lock=true);engine?.update(controls);updateLockUi()
+                focusRing.visibility=View.VISIBLE;flashNote("AE/AF terkunci. Ketuk layar atau tombol Buka kunci untuk melepas.")
+            }
+        },700)
+    }
+    private fun releaseLock(announce: Boolean) {
+        lockToken++
+        val had=controls.lock
+        controls=controls.copy(lock=false,meterX=-1f,meterY=-1f)
+        engine?.update(controls);updateLockUi();focusRing.visibility=View.GONE
+        if(announce && had) flashNote("Kunci dibuka.")
+    }
+    /** Dragging up or down changes the exposure compensation by whole steps. */
+    private fun dragBrightness(startEv: Int,dragPx: Float) {
+        val range=cameras.getOrNull(cameraIndex)?.characteristics?.get(C.CONTROL_AE_COMPENSATION_RANGE) ?: return
+        val ev=TapMath.evFromDrag(startEv,dragPx,preview.height.toFloat(),range.lower,range.upper)
+        if(ev==controls.ev) return
+        controls=controls.copy(ev=ev);commit()
+        val step=cameras.getOrNull(cameraIndex)?.characteristics?.get(C.CONTROL_AE_COMPENSATION_STEP)?.toFloat() ?: 0f
+        flashNote(String.format(Locale.US,"Terang %+.1f EV",ev*step))
     }
     /** The display must never show a ratio the camera is not using, so it follows the camera's own report. */
     private fun syncZoomFromCamera(e: CameraEngine?) {
@@ -949,59 +1086,70 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val c=cameras.getOrNull(cameraIndex) ?: return
         if(c.minFocus<=0) { message("Fokus","Kamera ini tidak menawarkan lensa fokus yang bisa digerakkan.");return }
         val panel=body()
-        panel.addView(button("Autofocus video","autofocus") { controls=controls.copy(focus=null);engine?.update(controls) },LinearLayout.LayoutParams(-1,dp(46)))
+        panel.tag="focus-dock"
+        panel.addView(dockHeader("Fokus & focus pull","focus-title","close-focus"))
+        panel.addView(button("Autofocus video","autofocus") { controls=controls.copy(focus=null);commit() },LinearLayout.LayoutParams(-1,dp(46)))
         slider(panel,"Fokus manual · ∞ sampai dekat",(((controls.focus ?: 0f)/c.minFocus)*1000).toInt(),1000) { v,label ->
-            val d=v/1000f*c.minFocus;controls=controls.copy(focus=d);engine?.update(controls)
+            val d=v/1000f*c.minFocus;controls=controls.copy(focus=d);commit()
             label.text=if(d<.001f) "Fokus ∞" else String.format(Locale.US,"Fokus %.2f diopter",d)
         }
         val marks=text("A: $focusA D   →   B: $focusB D",14f,gold);panel.addView(marks)
         panel.addView(row(button("Simpan A","mark-a") { focusA=controls.focus ?: 0f;marks.text="A: $focusA D → B: $focusB D" },button("Simpan B","mark-b") { focusB=controls.focus ?: 0f;marks.text="A: $focusA D → B: $focusB D" }))
         slider(panel,"Durasi ${pullDuration/1000f} detik",(pullDuration/100).toInt()-5,95) { v,label -> pullDuration=(v+5)*100L;label.text="Durasi ${pullDuration/1000f} detik" }
-        panel.addView(row(button("A → B","pull-ab") { controls=controls.copy(focus=focusB);engine?.pull(focusA,focusB,pullDuration) },button("B → A","pull-ba") { controls=controls.copy(focus=focusA);engine?.pull(focusB,focusA,pullDuration) }))
+        panel.addView(row(button("A → B","pull-ab") { controls=controls.copy(focus=focusB);commitPull(focusA,focusB) },button("B → A","pull-ba") { controls=controls.copy(focus=focusA);commitPull(focusB,focusA) }))
         panel.addView(text("Tandai A dan B sambil melihat ketajaman gambar. Kecepatan gerak lensa tetap bergantung pada motor fokus kamera.",12f,muted))
-        sheet("Fokus & focus pull",panel)
+        openDock(panel)
+    }
+    /** A focus pull is manual focus, so it releases the AE/AF lock first. */
+    private fun commitPull(from: Float,to: Float) {
+        if(controls.lock) { lockToken++;controls=controls.copy(lock=false);updateLockUi() }
+        engine?.pull(from,to,pullDuration)
     }
     private fun showExposure() {
         if(selected.highSpeed) { message("Exposure","Sesi high-speed memakai exposure otomatis. Gunakan 30 fps untuk ISO dan shutter manual.");return }
         val c=cameras.getOrNull(cameraIndex) ?: return
         val panel=body()
+        panel.tag="exposure-dock"
+        panel.addView(dockHeader("Exposure","exposure-title","close-exposure"))
         check(panel,"Exposure manual",controls.iso>0,c.manual) { enabled ->
             controls=if(enabled) controls.copy(iso=c.characteristics[C.SENSOR_INFO_SENSITIVITY_RANGE]?.clamp(400) ?: 400,shutterNs=1_000_000_000L/(selected.fps*2)) else controls.copy(iso=0,shutterNs=0)
-            engine?.update(controls)
+            commit()
         }
         val isoRange=c.characteristics[C.SENSOR_INFO_SENSITIVITY_RANGE]
         if(c.manual && isoRange!=null) {
             slider(panel,"ISO ${if(controls.iso>0) controls.iso else "Auto"}",((controls.iso.takeIf { it>0 } ?: 400)-isoRange.lower).coerceAtLeast(0),isoRange.upper.coerceAtMost(6400)-isoRange.lower) { value,label ->
-                controls=controls.copy(iso=value+isoRange.lower,shutterNs=controls.shutterNs.takeIf { it>0 } ?: 1_000_000_000L/(selected.fps*2));engine?.update(controls);label.text="ISO ${controls.iso}"
+                controls=controls.copy(iso=value+isoRange.lower,shutterNs=controls.shutterNs.takeIf { it>0 } ?: 1_000_000_000L/(selected.fps*2));commit();label.text="ISO ${controls.iso}"
             }
             panel.addView(button("Shutter: ${if(controls.shutterNs>0) "1/${1_000_000_000L/controls.shutterNs}" else "Auto"}","shutter") {
                 val denominators=listOf(30,60,100,120,250,500,1000).filter { it>=selected.fps }
                 AlertDialog.Builder(this).setTitle("Shutter").setItems(denominators.map { "1/$it detik" }.toTypedArray()) { _,index ->
-                    controls=controls.copy(iso=controls.iso.takeIf { it>0 } ?: isoRange.clamp(400),shutterNs=1_000_000_000L/denominators[index]);engine?.update(controls);onStatus("Shutter 1/${denominators[index]}")
+                    controls=controls.copy(iso=controls.iso.takeIf { it>0 } ?: isoRange.clamp(400),shutterNs=1_000_000_000L/denominators[index]);commit();onStatus("Shutter 1/${denominators[index]}")
                 }.show()
             },LinearLayout.LayoutParams(-1,dp(48)))
         }
         val evRange=c.characteristics[C.CONTROL_AE_COMPENSATION_RANGE]
         if(evRange!=null) slider(panel,"Kompensasi exposure (Auto)",controls.ev-evRange.lower,evRange.upper-evRange.lower) { value,label ->
-            controls=controls.copy(ev=value+evRange.lower,iso=0,shutterNs=0);engine?.update(controls)
+            controls=controls.copy(ev=value+evRange.lower,iso=0,shutterNs=0);commit()
             val step=c.characteristics[C.CONTROL_AE_COMPENSATION_STEP]?.toFloat() ?: 0f
             label.text=String.format(Locale.US,"Exposure %+.1f EV",controls.ev*step)
         }
-        check(panel,"Kunci exposure otomatis",controls.aeLock,c.characteristics[C.CONTROL_AE_LOCK_AVAILABLE]==true) { controls=controls.copy(aeLock=it);engine?.update(controls) }
-        panel.addView(text("Exposure manual mengatur ISO dan shutter bersamaan. Shutter dibatasi agar tidak melebihi satu periode frame.",12f,muted))
-        sheet("Exposure",panel)
+        check(panel,"Kunci exposure otomatis",controls.aeLock,c.characteristics[C.CONTROL_AE_LOCK_AVAILABLE]==true) { controls=controls.copy(aeLock=it);commit() }
+        panel.addView(text("Exposure manual mengatur ISO dan shutter bersamaan. Shutter dibatasi agar tidak melebihi satu periode frame. Terang juga bisa diatur dengan menggeser jari naik/turun di preview.",12f,muted))
+        openDock(panel)
     }
     private fun showWhiteBalance() {
         if(selected.highSpeed) { message("White balance","Sesi high-speed memakai white balance otomatis.");return }
         val c=cameras.getOrNull(cameraIndex) ?: return
         val panel=body()
+        panel.tag="wb-dock"
+        panel.addView(dockHeader("White balance","wb-title","close-wb"))
         val available=c.characteristics[C.CONTROL_AWB_AVAILABLE_MODES] ?: intArrayOf()
         val options=listOf("Auto" to 1,"Siang" to 5,"Berawan" to 6,"Teduh" to 8,"Lampu pijar" to 2,"Fluoresen" to 3)
         options.filter { it.second in available }.forEach { (name,value) ->
-            panel.addView(button(name,"wb-$value") { controls=controls.copy(wb=value,awbLock=false);engine?.update(controls);onStatus("White balance: $name") },LinearLayout.LayoutParams(-1,dp(44)).apply { bottomMargin=dp(4) })
+            panel.addView(button(name,"wb-$value") { controls=controls.copy(wb=value,awbLock=false);commit();onStatus("White balance: $name") },LinearLayout.LayoutParams(-1,dp(44)).apply { bottomMargin=dp(4) })
         }
-        check(panel,"Kunci AWB",controls.awbLock,c.characteristics[C.CONTROL_AWB_LOCK_AVAILABLE]==true) { controls=controls.copy(awbLock=it);engine?.update(controls) }
-        sheet("White balance",panel)
+        check(panel,"Kunci AWB",controls.awbLock,c.characteristics[C.CONTROL_AWB_LOCK_AVAILABLE]==true) { controls=controls.copy(awbLock=it);commit() }
+        openDock(panel)
     }
     private fun showSettings() {
         if(locked()) return

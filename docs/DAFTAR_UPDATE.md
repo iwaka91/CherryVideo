@@ -21,7 +21,22 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Catatan:** hasil emulator tidak membuktikan kecepatan atau kualitas Bokeh di Xiaomi 13T. Semua langkah menunggu perintah eksplisit ("Update Kode") sebelum kode diubah.
 
-## Status terbaru — 0.3.2-beta4 (Langkah 2: Bokeh langsung + Cinematic + peringatan panas)
+## Status terbaru — 0.3.3-beta (Langkah 3: kontrol sentuh + panel bawah) — 26 Okt 2026
+
+**Selesai di kode (belum diuji di Xiaomi; kompilasi dan uji JVM hanya di CI):**
+- **Panel bawah:** Fokus / Pull, Exposure, WB (mode Pro) kini panel di bawah preview (sama seperti Bokeh/Cinematic), tidak lagi jendela yang menutupi gambar. Isi dan fungsi sama.
+- **Ketuk untuk fokus:** titik ketuk dipetakan ke sensor (memperhitungkan rotasi, cermin kamera depan, tepi hitam preview, dan zoom) lalu dipakai sebagai area AF dan AE. Cincin putih muncul sebentar di titik itu.
+- **Kunci AE/AF:** tahan lama di preview; fokus ke titik itu, ±0,7 detik kemudian AE dikunci dan AF ditahan (pemicu fokus sekali). Cincin hijau tetap dan tombol "AE/AF terkunci · Buka kunci" muncul. Buka kunci dengan ketuk layar atau tombol. Kunci dilepas otomatis bila kamera dimulai ulang atau bila fokus/exposure manual dipilih.
+- **Geser terang:** geser satu jari naik/turun di preview mengubah kompensasi exposure (EV) per langkah, tampil sebagai teks singkat. Tidak aktif saat terkunci (ada pesan) dan saat exposure manual.
+- **Tidak tersedia:** 60 fps high-speed (kunci, ketuk fokus, geser terang) dan fokus/exposure manual Pro (kunci). Pesan singkat muncul di layar.
+- **Toast "Menyimpan…":** muncul sekali bila setelah Stop penyimpanan belum selesai dalam ±1 detik; berlaku untuk semua rekaman (juga saat berhenti karena panas).
+- Tidak diubah: Bokeh, Cinematic, peringatan panas, rekam/audio/LUT/zoom. 24 fps dan petunjuk shutter 1/48 tetap ditunda.
+- Uji JVM baru: `TapMathTest` (pemetaan titik, area, geser terang).
+- Versi 0.3.3-beta (versionCode 11). Paket dan kunci uji tidak berubah.
+
+**Yang perlu Bapak uji di HP:** ketuk fokus (dekat/jauh, potret dan lanskap, kamera depan); tahan lama untuk kunci lalu geser/ganti pandangan (fokus dan terang harus tetap); buka kunci lewat ketuk dan tombol; geser naik/turun untuk terang (juga saat merekam); panel Fokus/Exposure/WB tidak menutupi preview; toast "Menyimpan…" setelah rekaman panjang; rekaman biasa tidak berubah. Risiko belum terbukti: ketepatan titik fokus di Xiaomi 13T (pemetaan rotasi/cermin), dan apakah kunci AF menahan fokus selama rekaman.
+
+## Riwayat — 0.3.2-beta4 (Langkah 2: Bokeh langsung + Cinematic + peringatan panas)
 
 **Hasil Uji Bokeh di Xiaomi 13T (26 Okt 2026, 16,6 detik):** kamera 0, aliran 640x360 plus aliran 1080p 30 fps yang dibuang. GPU: rata-rata 24,2 ms (segmentasi 18,1; konversi 6,1), p90 29,4, maks 36,1, 29,7 FPS diproses dari 29,6 FPS kamera, muat 1,06 dtk. CPU: rata-rata 24,0 ms (segmentasi 18,0; konversi 5,9), p90 29,5, maks 37,3, 29,9 FPS dari 29,9, muat 21 ms. Area orang ±19% (GPU) / ±39% (CPU). Baterai 29,9 °C, suhu normal. Catatan: GPU dan CPU hampir sama (GPU mungkin tidak benar-benar dipakai); sebagian gambar melebihi 33 ms; uji tidak menggambar blur dan tidak menyimpan, jadi beban rekaman nyata dan panas rekaman panjang belum terbukti. Kesimpulan: Bokeh langsung di 1080p 30 fps layak dilanjutkan.
 

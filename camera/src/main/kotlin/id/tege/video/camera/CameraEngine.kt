@@ -30,6 +30,11 @@ data class Controls(
     val stabilization: Int=-1,
     val torch: Boolean=false,
     val zoom: Float=1f,
+    /** Tap-to-focus point as a fraction (0..1) of the whole sensor area; negative means none. */
+    val meterX: Float=-1f,
+    val meterY: Float=-1f,
+    /** AE/AF lock set by a long press on the preview (separate from the Exposure panel's own AE lock). */
+    val lock: Boolean=false,
 )
 
 interface CameraListener {
@@ -72,6 +77,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private var recordingStartNs=0L
     private val focus=FocusPullSession()
     private var exposureInfo=""
+    private var afLockApplied=false
     @Volatile var activePhysicalId: String?=null; private set
     @Volatile var appliedZoom=1f; private set
     @Volatile var reportedZoom: Float?=null; private set
@@ -166,7 +172,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         val callback=object: CameraCaptureSession.StateCallback() {
             override fun onConfigured(value: CameraCaptureSession) {
                 if(closing) { value.close();return }
-                session=value
+                session=value;afLockApplied=false
                 try {
                     request=camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                         addTarget(input)
@@ -234,16 +240,39 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         } else {
             b.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON)
             b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,entry.characteristics[C.CONTROL_AE_COMPENSATION_RANGE]?.clamp(controls.ev) ?: 0)
-            if(entry.characteristics[C.CONTROL_AE_LOCK_AVAILABLE]==true) b.set(CaptureRequest.CONTROL_AE_LOCK,controls.aeLock)
+            if(entry.characteristics[C.CONTROL_AE_LOCK_AVAILABLE]==true) b.set(CaptureRequest.CONTROL_AE_LOCK,controls.aeLock || controls.lock)
         }
         val distance=controls.focus
+        var afLockedNow=false
         if(distance!=null && entry.minFocus>0) {
             b.set(CaptureRequest.CONTROL_AF_MODE,CaptureRequest.CONTROL_AF_MODE_OFF)
             b.set(CaptureRequest.LENS_FOCUS_DISTANCE,distance.coerceIn(0f,entry.minFocus))
         } else {
             val available=entry.characteristics[C.CONTROL_AF_AVAILABLE_MODES] ?: intArrayOf()
-            b.set(CaptureRequest.CONTROL_AF_MODE,if(available.contains(CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO else CaptureRequest.CONTROL_AF_MODE_OFF)
+            if(controls.lock && controls.iso==0 && available.contains(CaptureRequest.CONTROL_AF_MODE_AUTO)) {
+                // Locked: AUTO holds the lens where a single trigger leaves it.
+                b.set(CaptureRequest.CONTROL_AF_MODE,CaptureRequest.CONTROL_AF_MODE_AUTO);afLockedNow=true
+            } else b.set(CaptureRequest.CONTROL_AF_MODE,if(available.contains(CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO else CaptureRequest.CONTROL_AF_MODE_OFF)
         }
+        // Tap-to-focus region for auto focus and auto exposure. A zero-weight region means "camera default".
+        val active=entry.characteristics[C.SENSOR_INFO_ACTIVE_ARRAY_SIZE]
+        val maxAf=entry.characteristics[C.CONTROL_MAX_REGIONS_AF] ?: 0
+        val maxAe=entry.characteristics[C.CONTROL_MAX_REGIONS_AE] ?: 0
+        val noRegion=arrayOf(android.hardware.camera2.params.MeteringRectangle(0,0,0,0,0))
+        val spot: android.hardware.camera2.params.MeteringRectangle?=if(controls.meterX>=0f && controls.meterY>=0f && active!=null) {
+            val r=TapMath.region(controls.meterX,controls.meterY,active.left,active.top,active.right,active.bottom)
+            android.hardware.camera2.params.MeteringRectangle(r[0],r[1],r[2]-r[0],r[3]-r[1],android.hardware.camera2.params.MeteringRectangle.METERING_WEIGHT_MAX)
+        } else null
+        if(maxAf>0) b.set(CaptureRequest.CONTROL_AF_REGIONS,if(spot!=null && distance==null) arrayOf(spot) else noRegion)
+        if(maxAe>0) b.set(CaptureRequest.CONTROL_AE_REGIONS,if(spot!=null && !(controls.iso>0 && controls.shutterNs>0 && entry.manual)) arrayOf(spot) else noRegion)
+        // One focus trigger when the lock starts; afterwards the repeating request keeps the trigger idle.
+        b.set(CaptureRequest.CONTROL_AF_TRIGGER,CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+        if(afLockedNow && !afLockApplied) {
+            b.set(CaptureRequest.CONTROL_AF_TRIGGER,CaptureRequest.CONTROL_AF_TRIGGER_START)
+            runCatching { session?.capture(b.build(),captureCallback,handler) }
+            b.set(CaptureRequest.CONTROL_AF_TRIGGER,CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+        }
+        afLockApplied=afLockedNow
         b.set(CaptureRequest.CONTROL_AWB_MODE,controls.wb)
         if(entry.characteristics[C.CONTROL_AWB_LOCK_AVAILABLE]==true) b.set(CaptureRequest.CONTROL_AWB_LOCK,controls.awbLock)
         b.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,if(controls.stabilization==1 && entry.ois) 1 else 0)

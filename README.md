@@ -4,7 +4,13 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 ![Android qualification](https://github.com/iwaka91/CherryVideo/actions/workflows/android.yml/badge.svg)
 
-[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status 0.3.2-beta2 dan rencana Cinematic Look / Bokeh AI.
+[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status terbaru 0.3.3-beta (kontrol sentuh).
+
+## Update 0.3.3
+
+- Panel **Fokus / Exposure / WB** (Pro) pindah ke panel bawah; preview tetap terlihat.
+- **Ketuk** preview untuk fokus di titik itu, **tahan lama** untuk mengunci AE/AF (tombol Buka kunci, atau ketuk layar), **geser naik/turun** untuk mengatur terang. Tidak tersedia pada 60 fps high-speed dan saat fokus/exposure manual Pro.
+- Toast **Menyimpan…** bila penyimpanan video lama.
 
 ## Update 0.3.2
 
