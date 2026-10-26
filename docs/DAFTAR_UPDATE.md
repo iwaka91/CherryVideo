@@ -28,7 +28,7 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 - Kamera belakang dibuka dengan aliran 1080p 30 fps (dibuang, pengganti beban rekaman) plus **aliran gambar kecil tambahan** (640x360 bila tersedia) ke MediaPipe segmentasi orang (model Selfie Segmenter, di dalam APK).
 - Diukur bergantian: **GPU ±10 detik, lalu CPU ±5 detik**. Dicatat: waktu per gambar (rata-rata, terlambat 10%, maksimum; konversi dan segmentasi terpisah), FPS diproses vs fps kamera, area orang terdeteksi, suhu baterai, status panas, dan headroom panas per detik. 5 gambar awal tiap tahap tidak dihitung (pemanasan).
 - Hasil: ringkasan Indonesia + JSON lengkap + Ekspor JSON (`CherryVideo-uji-bokeh.json`). Tidak merekam dan tidak mengubah pengaturan.
-- Model diunduh saat build oleh CI (`tools/fetch_models.sh`); aplikasi tidak pernah mengunduh. Lisensi MediaPipe (Apache 2.0) di Tentang dan NOTICE. Pustaka MediaPipe x86 32-bit tidak ikut APK.
+- Model diunduh saat build oleh CI (`tools/fetch_models.sh`); aplikasi tidak pernah mengunduh. Lisensi MediaPipe (Apache 2.0) di Tentang dan NOTICE. Pustaka MediaPipe hanya untuk HP 64-bit ARM (seperti Xiaomi 13T) dan disimpan terkompresi agar tambahan ukuran tetap belasan MB. MediaPipe tidak punya versi x86_64, sehingga **emulator CI tidak bisa menguji segmentasi**; CI hanya memastikan kamera, model di APK, dan laporan berjalan.
 - Versi 0.3.2-beta3 (versionCode 9). Paket `id.tege.video.hotfix` dan kunci uji tidak berubah.
 
 **Yang perlu Bapak uji di HP:** buka Pengaturan → Diagnostik → **Uji Bokeh**, arahkan kamera belakang ke orang selama ±15 detik, lalu kirim JSON-nya. Langkah 2 belum dimulai.

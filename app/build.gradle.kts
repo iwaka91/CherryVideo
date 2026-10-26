@@ -27,8 +27,12 @@ android {
     }
     lint { abortOnError = true; checkDependencies = true }
     testOptions { animationsDisabled = true }
-    // MediaPipe ships 32-bit x86 libraries the app does not otherwise support; keep the APK small.
-    packaging { jniLibs { excludes += setOf("lib/x86/libmediapipe_tasks_vision_jni.so") } }
+    // Uji Bokeh (MediaPipe) is offered on 64-bit ARM phones only (Xiaomi 13T); 32-bit copies would add ~8 MB.
+    // Native libraries are stored compressed so the added size stays within the agreed "belasan MB".
+    packaging { jniLibs {
+        useLegacyPackaging = true
+        excludes += setOf("lib/x86/libmediapipe_tasks_vision_jni.so","lib/armeabi-v7a/libmediapipe_tasks_vision_jni.so")
+    } }
 }
 dependencies {
     implementation(project(":camera"))

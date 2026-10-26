@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import id.tege.video.camera.BokehProbe
 import org.junit.Assert.*
+import org.junit.Assume.assumeFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +28,8 @@ class BokehProbeTest {
         assertFalse(report.getBoolean("recording"))
         assertEquals(64,report.getString("modelSha256").length)
         val phases=report.getJSONArray("phases")
+        // MediaPipe has no x86_64 library: on the CI emulator only the camera, model asset and report are verified.
+        assumeFalse("MediaPipe tidak tersedia untuk ABI emulator: $brief",brief.contains("UnsatisfiedLinkError") && android.os.Build.SUPPORTED_ABIS.first()=="x86_64")
         val processed=(0 until phases.length()).sumOf { phases.getJSONObject(it).getInt("framesProcessed") }
         assertTrue("Tidak ada gambar diproses: $brief",processed>0)
         assertTrue(report.getString("summary").startsWith("Uji Bokeh selesai"))
