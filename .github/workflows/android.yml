@@ -50,6 +50,11 @@ jobs:
         run: bash tools/fetch_models.sh
       - name: Compile, lint and JVM tests
         run: bash gradlew --no-daemon :core:test :camera:lintDebug :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Report APK size and native libraries
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          echo "::notice title=Ukuran APK::$(stat -c %s $apk) byte"
+          unzip -lv "$apk" | awk '/lib\/|\.tflite/ {print $1, $3, $8}' | while read -r size packed name; do echo "::notice title=Isi APK::$name $size byte (terkemas $packed)"; done
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
