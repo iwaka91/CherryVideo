@@ -10,15 +10,14 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Langkah 1 — Uji Bokeh (diagnostik, tanpa merekam; menunggu perintah "Update Kode").** Tombol di Pengaturan → Diagnostik. Memuat MediaPipe (segmentasi orang, di dalam HP, tanpa internet) dan mengukur waktu proses per gambar, FPS, dan suhu selama ±15 detik. Tidak mengubah rekaman.
 
-**Langkah 2 — Bokeh langsung + penghalusan tepi + Cinematic Look + toast "Menyimpan…".**
+**Langkah 2 — Bokeh langsung + penghalusan tepi + Cinematic Look.**
 - Tombol "Bokeh (eksperimen)", mati secara bawaan; sakelar dan slider kekuatan blur. Hanya orang; hanya 1080p 30 fps ke bawah (720p 30 fps ikut). Mode 60 fps dan 4K tidak mengaktifkan Bokeh.
 - **Tidak ada mati otomatis untuk Bokeh.** Bila HP panas: peringatan "HP panas, video akan dimatikan" dengan hitung mundur 30 detik; saat habis, rekaman berhenti, tersimpan, dan kembali ke beranda kamera (tanpa tombol "Matikan Bokeh"). Bila FPS turun: hanya teks peringatan.
 - Penghalusan tepi (rambut, kedipan topeng).
 - **Cinematic Look:** tombol "Cinematic" (mati secara bawaan) berisi Look (Cinematic 1/2), grain film, vinyet tipis, slider kekuatan, dan bilah 2,39:1 (preview, dengan pilihan ikut masuk ke video). 24 fps dan petunjuk shutter 1/48 (hanya Pro, hanya saran) ditunda dan diputuskan terpisah.
-- **Toast "Menyimpan…"** bila penyimpanan video memakan waktu lama (berlaku untuk semua rekaman, kecuali pengguna menentukan lain).
 - Ukuran APK boleh bertambah belasan MB; lisensi MediaPipe dicantumkan di Tentang.
 
-**Langkah 3 — Update 0.3.3 + toast "Menyimpan…" bila belum ada:** panel bawah untuk Fokus/Pull, Exposure, WB (tidak menutupi preview); ketuk untuk fokus; tahan lama untuk kunci AE/AF; buka kunci dengan ketuk atau tombol "Buka kunci"; geser naik/turun mengatur terang. Kunci tidak tersedia pada 60 fps high-speed dan tidak dipakai saat fokus/exposure manual Pro. Titik fokus hanya bisa dibuktikan di HP.
+**Langkah 3 — Update 0.3.3 + toast "Menyimpan…":** toast "Menyimpan…" muncul bila penyimpanan video memakan waktu lama (berlaku untuk semua rekaman). Panel bawah untuk Fokus/Pull, Exposure, WB (tidak menutupi preview); ketuk untuk fokus; tahan lama untuk kunci AE/AF; buka kunci dengan ketuk atau tombol "Buka kunci"; geser naik/turun mengatur terang. Kunci tidak tersedia pada 60 fps high-speed dan tidak dipakai saat fokus/exposure manual Pro. Titik fokus hanya bisa dibuktikan di HP.
 
 **Catatan:** hasil emulator tidak membuktikan kecepatan atau kualitas Bokeh di Xiaomi 13T. Semua langkah menunggu perintah eksplisit ("Update Kode") sebelum kode diubah.
 
