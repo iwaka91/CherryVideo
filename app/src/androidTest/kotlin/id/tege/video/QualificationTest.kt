@@ -55,7 +55,7 @@ class QualificationTest {
         val deadline=System.currentTimeMillis()+timeout
         while(System.currentTimeMillis()<deadline) { if(predicate()) return;Thread.sleep(100) }
         context.filesDir.listFiles()?.filter { it.name.startsWith("pending-") && it.extension=="mp4" }?.forEach { it.copyTo(File(evidence,it.name),overwrite=true) }
-        screenshot("test-failure.png");fail(message)
+        screenshot("test-failure.png");fail(message+" | attempt="+runCatching { File(context.filesDir,"last-recording-attempt.json").readText().replace(Regex("\\s+")," ").take(600) }.getOrNull())
     }
     private fun tap(activity: MainActivity,tag: String) {
         instrumentation.runOnMainSync { assertTrue("Button $tag",activity.window.decorView.findViewWithTag<Button>(tag).performClick()) }
@@ -99,7 +99,7 @@ class QualificationTest {
                 stamp>0 && System.nanoTime()-stamp in 0L..250_000_000L
             }
             tap(activity,"record")
-            await("No finalized camera video: ${activity.engine?.lastError} recording=${activity.engine?.isRecording} busy=${activity.engine?.busy} attempt=${runCatching { File(context.filesDir,"last-recording-attempt.json").readText().replace(Regex("\\s+")," ").take(500) }.getOrNull()}") { activity.lastSaved!=null }
+            await("No finalized camera video: ${activity.engine?.lastError}") { activity.lastSaved!=null }
             val saved=activity.lastSaved!!
             assertTrue(saved.report.getInt("frames")>=12)
             assertTrue(saved.report.getBoolean("audio"))
