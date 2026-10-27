@@ -11,6 +11,8 @@ import id.tege.video.core.AudioMode
 import id.tege.video.core.VideoProfile
 import id.tege.video.core.AudioFrameClock
 import id.tege.video.core.RecordingStart
+import id.tege.video.core.PauseTimeline
+import id.tege.video.core.WindFilter
 import org.json.JSONObject
 import java.io.File
 import java.nio.ByteBuffer
@@ -36,7 +38,21 @@ class SurfaceRecorder(
     private val onFailure: (String) -> Unit,
     private val audioMode: AudioMode = AudioMode.NATURAL,
     private val audioDeviceId: Int = 0,
+    /** Video bit rate; "Hemat Ruang" passes a lower value than the profile's own. */
+    private val bitrate: Int = profile.bitrate,
+    /** High-pass filter against wind rumble and handling noise. */
+    private val windFilter: Boolean = false,
 ) {
+    private val timeline=PauseTimeline()
+    private val pauseLock=Any()
+    private val held=ArrayDeque<Packet>()
+    /** True once the file has a valid start, from then on pause/resume is allowed. */
+    @Volatile var muxing=false; private set
+    @Volatile var paused=false; private set
+    /** Last moment (System.nanoTime) a microphone sample hit full scale; drives the "suara pecah" warning. */
+    @Volatile var lastClipNs=0L; private set
+    private var levelBins=IntArray(600)
+    private var levelCount=0
     private var video: MediaCodec?=null
     private var audio: MediaCodec?=null
     private var microphone: AudioRecord?=null
@@ -88,6 +104,7 @@ class SurfaceRecorder(
         .put("channels",channels).put("sampleRate",48000).put("actualInput",actualInput)
         .put("activeMicrophones",microphoneInfo).put("systemNoiseSuppressor",nsState).put("systemAutomaticGainControl",agcState)
         .put("inputRmsDbfs",levels(inputSquares,inputMeterFrames)).put("outputRmsDbfs",levels(outputSquares,outputMeterFrames))
+        .put("windFilter",windFilter).put("videoBitrate",bitrate).put("pauses",synchronized(pauseLock) { timeline.gapCount })
     private var channels=2
     private var started=false
     private var stopped=false
@@ -99,7 +116,7 @@ class SurfaceRecorder(
             video=MediaCodec.createEncoderByType(mime).also { video=it }.apply {
                 configure(MediaFormat.createVideoFormat(mime,profile.width,profile.height).apply {
                     setInteger(MediaFormat.KEY_COLOR_FORMAT,MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                    setInteger(MediaFormat.KEY_BIT_RATE,profile.bitrate)
+                    setInteger(MediaFormat.KEY_BIT_RATE,bitrate)
                     setInteger(MediaFormat.KEY_FRAME_RATE,profile.fps)
                     setInteger(MediaFormat.KEY_I_FRAME_INTERVAL,1)
                     setInteger(MediaFormat.KEY_MAX_B_FRAMES,0)
@@ -142,6 +159,35 @@ class SurfaceRecorder(
         return AudioRecord(route?.source ?: MediaRecorder.AudioSource.CAMCORDER,
             48_000,mask,AudioFormat.ENCODING_PCM_16BIT,max(minimum*4,48_000*count*2/5))
     }
+    private fun nowUs()=(System.nanoTime()-epochNs)/1000
+    /** Stops writing to the file; the camera keeps running so resuming is instant. */
+    fun pause(): Boolean {
+        if(!muxing || !started || stopped) return false
+        synchronized(pauseLock) {
+            if(timeline.paused || timeline.awaitingKeyframe) return false
+            timeline.pause(nowUs())
+        }
+        paused=true;return true
+    }
+    /** Continues in the same file. The next video frame is requested as a keyframe so the file stays playable. */
+    fun resume(): Boolean {
+        synchronized(pauseLock) { if(!timeline.paused) return false;timeline.resume(nowUs()) }
+        runCatching { video?.setParameters(android.os.Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME,0) }) }
+        paused=false;return true
+    }
+    /** Peak level per 100 ms of the saved file (pauses removed), for "Rapikan bagian diam". Read after stop(). */
+    fun levelLog(): IntArray {
+        val out=IntArray(levelCount)
+        var last=0
+        synchronized(pauseLock) {
+            for(b in 0 until levelCount) {
+                val mapped=timeline.map(b*100_000L) ?: continue
+                val i=(mapped/100_000L).toInt()
+                if(i in out.indices) { out[i]=max(out[i],levelBins[b]);last=max(last,i+1) }
+            }
+        }
+        return out.copyOf(last)
+    }
     fun start() {
         check(!started)
         video!!.start();audio?.start()
@@ -165,6 +211,7 @@ class SurfaceRecorder(
         var clockReady=false
         var routeVerified=false
         var routedDeviceId: Int?=null
+        val wind=if(windFilter) WindFilter(channels) else null
         try {
             while(capturing) {
                 val index=codec.dequeueInputBuffer(10_000)
@@ -192,9 +239,11 @@ class SurfaceRecorder(
                     }) }.getOrDefault(org.json.JSONArray())
                     routedDeviceId=input.routedDevice?.id;routeVerified=true
                 }
+                wind?.process(buffer,count/(channels*2))
                 var amplitude=0
                 for(i in 0 until count-1 step 2) amplitude=max(amplitude,abs(buffer.getShort(i).toInt()))
                 peak=amplitude
+                if(amplitude>=32_000) lastClipNs=System.nanoTime()
                 val captured=count/(channels*2)
                 meter(buffer,captured,inputSquares);inputMeterFrames+=captured
                 val frameCount=if(audioMode==AudioMode.NATURAL) captured else AudioProcessor.FRAME
@@ -212,6 +261,11 @@ class SurfaceRecorder(
                 meter(buffer,frameCount,outputSquares);outputMeterFrames+=frameCount
                 val pts=clock.timeUs(frames,epochNs)-audioMode.latencyUs
                 if(firstAudioInputUs==null) firstAudioInputUs=pts
+                val bin=(pts/100_000L).toInt()
+                if(bin>=0 && bin<2_000_000) {
+                    if(bin>=levelBins.size) levelBins=levelBins.copyOf(maxOf(bin+1,levelBins.size*2))
+                    levelBins[bin]=max(levelBins[bin],amplitude);levelCount=max(levelCount,bin+1)
+                }
                 // Trim PCM preceding the shared epoch before AAC encoding, not by
                 // dropping arbitrary encoded video frames (which can lose the first IDR).
                 val skip=if(pts<0) minOf(frameCount,((-pts*48_000+999_999)/1_000_000).toInt()) else 0
@@ -255,13 +309,29 @@ class SurfaceRecorder(
         var written=0L
         var limitSent=false
         val sampleCounts=IntArray(codecs.size)
-        fun write(packet: Packet) {
-            val pts=startup.outputTimeUs(packet.pts) ?: return
+        fun put(packet: Packet,fileUs: Long) {
+            val pts=startup.outputTimeUs(fileUs) ?: return
             val sample=MediaCodec.BufferInfo().apply { set(0,packet.bytes.size,pts,packet.flags) }
             muxer!!.writeSampleData(tracks[packet.track],ByteBuffer.wrap(packet.bytes),sample)
             sampleCounts[packet.track]++
             written+=packet.bytes.size
             if(written>=maxBytes && !limitSent) { limitSent=true;onLimit() }
+        }
+        fun write(packet: Packet) {
+            val decision=synchronized(pauseLock) { timeline.decide(packet.pts,packet.track==0,packet.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME!=0) }
+            when(decision.kind) {
+                PauseTimeline.Kind.DROP -> return
+                PauseTimeline.Kind.HOLD -> { held.addLast(packet);return }
+                PauseTimeline.Kind.KEEP -> put(packet,decision.adjustedUs)
+            }
+            // The keyframe after a resume decides which waiting audio stays.
+            if(packet.track==0 && held.isNotEmpty()) {
+                val waiting=ArrayList(held);held.clear()
+                waiting.forEach { p ->
+                    val d=synchronized(pauseLock) { timeline.decide(p.pts,false,false) }
+                    if(d.kind==PauseTimeline.Kind.KEEP) put(p,d.adjustedUs) else if(d.kind==PauseTimeline.Kind.HOLD) held.addLast(p)
+                }
+            }
         }
         try {
             while(draining && ended.any { !it }) {
@@ -285,7 +355,7 @@ class SurfaceRecorder(
                                     if(writing && startup.originUs!=null) {
                                         while(pending.isNotEmpty()) write(pending.removeFirst())
                                         pendingBytes=0
-                                        write(packet)
+                                        write(packet);muxing=true
                                     } else {
                                         pending.addLast(packet);pendingBytes+=bytes.size
                                         check(pendingBytes<32L*1024*1024) { "Awal track rekaman terlalu lama menunggu: $timingReport" }

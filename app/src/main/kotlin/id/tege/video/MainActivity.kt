@@ -100,6 +100,58 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var cinemaStrength=.7f
     private var cinemaBars=false
     private var cinemaBarsInVideo=false
+    // 0.4: Dokumentasi and Bicara tools. Choices are remembered; "Mulai saat wajah terlihat" is one-shot.
+    private var countdown=0
+    private var prompterOn=false
+    private var prompterText=""
+    private var prompterSize=28
+    private var prompterSpeed=40
+    private var guides=false
+    private var mirror=true
+    private var fillLight=false
+    private var lockOnRecord=false
+    private var lightWarn=false
+    private var autoFace=false
+    private var lowerOn=false
+    private var lowerTitle=""
+    private var lowerSub=""
+    private var activityName=""
+    private var titleDate=false
+    private var windFilter=false
+    private var saver=false
+    private var zebra=false
+    private var lowLight=false
+    private var dimScreen=false
+    private var volumeKeys=false
+    private var bgImage=false
+    private var bgBitmap: Bitmap?=null
+    private lateinit var prompter: PrompterView
+    private lateinit var guideView: GuideOverlay
+    private lateinit var meter: LevelMeter
+    private lateinit var countdownText: TextView
+    private lateinit var fillRing: View
+    private lateinit var recBar: LinearLayout
+    private lateinit var pauseButton: Button
+    private lateinit var takeBar: LinearLayout
+    private var lastTake: SavedVideo?=null
+    private var countdownLeft=0
+    private val countdownTick=Runnable { tickCountdown() }
+    private var pausedSince=0L
+    private var pausedTotal=0L
+    private val marks=ArrayList<Long>()
+    private var savedLocks: Pair<Boolean,Boolean>?=null
+    private var lightState=LightCheck.State.OK
+    private var lightCandidate=LightCheck.State.OK
+    private var lightRepeat=0
+    private var faceSeen=0
+    private var batteryAt=0L
+    private var batteryPct=100
+    private var charging=true
+    private var dimmed=false
+    private val dimRunnable=Runnable { dimNow() }
+    private var clipText: String?=null
+    private var lightText: String?=null
+    private var batteryText: String?=null
     private lateinit var bokehButton: Button
     private lateinit var cinemaButton: Button
     private lateinit var banner: TextView
@@ -143,12 +195,16 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             val e=engine
             syncZoomFromCamera(e)
             tickHot(e);tickFps(e);tickSaving(e)
+            tickTools(e)
             if(e?.isRecording==true) {
-                val elapsed=(SystemClock.elapsedRealtime()-recordingSince)/1000
+                val elapsed=recordedMs()/1000
                 val amp=e.amplitude()
                 val db=if(amp>0) (20*log10(amp/32767.0)).coerceAtLeast(-60.0).toInt() else -60
-                detail.text=String.format(Locale.US,"REC %02d:%02d · %s · %s",elapsed/60,elapsed%60,if(audio==0) "Tanpa audio" else "$db dBFS",storageLabel())
-                if(StatFs(filesDir.path).availableBytes<150L*1024*1024) e.stop()
+                val free=StatFs(filesDir.path).availableBytes
+                detail.text=String.format(Locale.US,"%s %02d:%02d · %s · ±%d mnt tersisa",if(e.isPaused) "JEDA" else "REC",elapsed/60,elapsed%60,if(audio==0) "Tanpa audio" else "$db dBFS",ShotNames.minutesLeft(free,videoBitrate()))
+                meter.visibility=if(audio!=0) View.VISIBLE else View.GONE
+                meter.level=((db+60)/60f).coerceIn(0f,1f)
+                if(free<150L*1024*1024) e.stop()
             } else if(!uiRecording) {
                 val fps=e?.previewStats?.optDouble("previewSubmittedFps",0.0) ?: 0.0
                 detail.text="${if(fps>0) String.format(Locale.US,"Preview %.0f fps · ",fps) else ""}${if(bake || cinema) "Warna ke video" else "LUT pratinjau"} · ${storageLabel()} · ${thermalLabel()}"
@@ -172,6 +228,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         bokehPreset=BokehPreset.of(prefs.getString("bokehPreset",BokehPreset.POTRET.name))
         cinemaLook=if(prefs.getInt("cinemaLook",4)==5) 5 else 4;cinemaStrength=prefs.getFloat("cinemaStrength",.7f).coerceIn(0f,1f)
         cinemaBars=prefs.getBoolean("cinemaBars",false);cinemaBarsInVideo=prefs.getBoolean("cinemaBarsInVideo",false)
+        loadShootPrefs()
         val stored=prefs.getString("lut",null)
         if(stored!=null) runCatching { lut=CubeLut.parse(File(filesDir,"luts/$stored.cube").readBytes());lutName=prefs.getString("lutName","LUT Saya").orEmpty() }
         cameras=runCatching { CameraCatalog.list(this) }.getOrDefault(emptyList())
@@ -296,14 +353,45 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             visibility=View.GONE;background=shape(Color.argb(215,24,120,70),16);setPadding(dp(14),0,dp(14),0)
         }
         chipKey="";chipViews.clear()
+        guideView=GuideOverlay(this) { if(preview.width>0 && preview.height>0) TextureGeometry.viewport(preview.width,preview.height,selected.width,selected.height,rotation()) else null }.apply { tag="guides" }
+        prompter=PrompterView(this).apply { tag="prompter";script=prompterText;sizeSp=prompterSize;speedDp=prompterSpeed;contentDescription="Teleprompter. Ketuk untuk berhenti atau lanjut." }
+        meter=LevelMeter(this).apply { tag="level-meter";visibility=View.GONE }
+        countdownText=text("",96f,Color.WHITE).apply {
+            tag="countdown";visibility=View.GONE;gravity=Gravity.CENTER;typeface=Typeface.DEFAULT_BOLD
+            setShadowLayer(dp(6).toFloat(),0f,0f,Color.BLACK);setOnClickListener { cancelCountdown(true) }
+        }
+        fillRing=View(this).apply {
+            tag="fill-light";visibility=View.GONE;isClickable=false;importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            background=GradientDrawable().apply { setColor(Color.TRANSPARENT);setStroke(dp(30),Color.WHITE) }
+        }
+        pauseButton=recButton("Jeda","rec-pause") { togglePause() }
+        recBar=LinearLayout(this).apply {
+            tag="rec-bar";orientation=LinearLayout.VERTICAL;visibility=View.GONE
+            addView(pauseButton,LinearLayout.LayoutParams(dp(68),dp(44)).apply { bottomMargin=dp(6) })
+            addView(recButton("Foto","rec-photo") { takePhoto() },LinearLayout.LayoutParams(dp(68),dp(44)).apply { bottomMargin=dp(6) })
+            addView(recButton("Tandai","rec-mark") { addMark() },LinearLayout.LayoutParams(dp(68),dp(44)))
+        }
         val frame=FrameLayout(this).apply {
             addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1))
+            addView(guideView,FrameLayout.LayoutParams(-1,-1));addView(fillRing,FrameLayout.LayoutParams(-1,-1))
+            addView(prompter,FrameLayout.LayoutParams(-1,dp(if(landscape) 120 else 170),Gravity.TOP).apply { topMargin=dp(30) })
+            addView(meter,FrameLayout.LayoutParams(dp(120),dp(8),Gravity.TOP or Gravity.START).apply { setMargins(dp(10),dp(36),0,0) })
             addView(detail,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply { setMargins(dp(8),dp(8),dp(8),0) })
             addView(zoomOverlay,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
             addView(note,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER).apply { setMargins(dp(16),0,dp(16),0) })
             addView(banner,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { setMargins(dp(16),dp(40),dp(16),0) })
             addView(focusRing,FrameLayout.LayoutParams(dp(64),dp(64),Gravity.TOP or Gravity.START))
             addView(lockChip,FrameLayout.LayoutParams(-2,dp(36),Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin=dp(76) })
+            addView(recBar,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL or Gravity.END).apply { rightMargin=dp(8) })
+            addView(countdownText,FrameLayout.LayoutParams(-1,-1))
+        }
+        // After a recording: quick actions for the last take.
+        takeBar=LinearLayout(this).apply {
+            tag="take-bar";gravity=Gravity.CENTER_VERTICAL;visibility=View.GONE
+            listOf("Buang" to "take-discard","Potong" to "take-trim","Rapikan" to "take-silence","Bagikan" to "take-share").forEach { (name,id) ->
+                addView(button(name,id) { lastTake?.let { take -> takeAction(id,take.uri,take.name) } }.apply { textSize=12f },LinearLayout.LayoutParams(0,dp(38),1f).apply { setMargins(dp(2),dp(2),dp(2),dp(2)) })
+            }
+            addView(button("✕","take-close") { visibility=View.GONE;lastTake=null }.apply { contentDescription="Tutup aksi video terakhir" },LinearLayout.LayoutParams(dp(40),dp(38)))
         }
         val panel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL };normalControls=panel
         controlHost=FrameLayout(this).apply { tag="control-host";addView(panel) }
@@ -363,13 +451,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             tag="record";text="";contentDescription="Mulai rekaman"
             minWidth=0;minimumWidth=0;minHeight=0;minimumHeight=0;setPadding(0,0,0,0);stateListAnimator=null
             background=recordBackground(false);isEnabled=false
-            setOnClickListener {
-                if(colorDock) closeColors()
-                val e=engine ?: return@setOnClickListener
-                if(e.isRecording) { record.isEnabled=false;onStatus("Menyimpan dan memeriksa video…");e.stop() }
-                else if(ThermalPolicy.blocksStart(thermal)) flashNote(hotStartMessage)
-                else if(e.isReady && !e.busy) { record.isEnabled=false;onStatus("Memulai rekaman…");e.start(audio,audioMode,audioDeviceId) }
-            }
+            setOnClickListener { onRecordPressed() }
         }
         val gallery=toolButton("Galeri",R.drawable.ic_gallery,"gallery") { showGallery() }
         moreButton=toolButton("Lainnya",R.drawable.ic_more,"more") { toggleDrawer() }
@@ -381,6 +463,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
         // "Lainnya" drawer: secondary controls stay one tap away so the preview keeps most of the screen.
         panel.addView(modeSwitch,LinearLayout.LayoutParams(-1,dp(46)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
+        panel.addView(row(button("Dokumentasi","doc-tools") { showDocTools() },button("Bicara","talk-tools") { showTalkTools() }))
         panel.addView(row(colors,stable));panel.addView(row(bokehButton,cinemaButton));panel.addView(proRow);panel.addView(row(audioButton,settings))
         val side=if(landscape) 64 else 84
         val recordRow=LinearLayout(this).apply {
@@ -398,15 +481,16 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
                 orientation=LinearLayout.VERTICAL;setPadding(dp(8),0,0,0)
                 addView(header);addView(status);addView(topRow);addView(zoomDock)
                 addView(ScrollView(this@MainActivity).apply { addView(controlHost) },LinearLayout.LayoutParams(-1,0,1f))
-                addView(recordRow);addView(footer)
+                addView(takeBar);addView(recordRow);addView(footer)
             }
             root.addView(sidebar,LinearLayout.LayoutParams(dp(254),-1))
         } else {
             root.addView(header);root.addView(status);root.addView(topRow);root.addView(zoomDock)
             root.addView(frame,LinearLayout.LayoutParams(-1,0,1f).apply { topMargin=dp(4) })
-            root.addView(controlHost);root.addView(recordRow);root.addView(footer)
+            root.addView(takeBar);root.addView(controlHost);root.addView(recordRow);root.addView(footer)
         }
-        applyModeUi();applyDrawerUi();updateLensUi();updateZoomUi()
+        applyModeUi();applyDrawerUi();updateLensUi();updateZoomUi();applyToolViews()
+        if(lastTake!=null && !uiRecording) takeBar.visibility=View.VISIBLE
         setContentView(root);root.requestApplyInsets();updateSelectionLabels();rebuilding=false
     }
     /** Returns false when the change was refused (recording), so the switch can snap back. */
@@ -494,7 +578,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val useBokeh=bokeh && BokehPolicy.eligible(selected,camera.physical)
         if(bokeh && !useBokeh) BokehPolicy.reason(selected,camera.physical)?.let { flashNote(it) }
         e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation(),useBokeh,bokehStrength,bokehTuning())
-        e.update(controls);applyGrade(e)
+        controls=controls.copy(faceDetect=autoFace,lowLight=lowLight)
+        e.update(controls);applyGrade(e);applyExtras(e)
     }
     private fun setZoom(ratio: Float) {
         val camera=cameras.getOrNull(cameraIndex) ?: return
@@ -562,7 +647,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(vp[2]<=0 || vp[3]<=0) return null
         val u=(x-vp[0])/vp[2];val v=(y-vp[1])/vp[3]
         if(u<0f || u>1f || v<0f || v>1f) return null
-        val s=TapMath.toSensor(u,v,rotation(),camera.front)
+        val s=TapMath.toSensor(u,v,rotation(),camera.front && mirror)
         val crop=ZoomPolicy.crop(active.left,active.top,active.right,active.bottom,controls.zoom.coerceAtLeast(1f))
         return TapMath.toActive(s.first,s.second,crop,active.left,active.top,active.right,active.bottom)
     }
@@ -673,7 +758,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         main.post { startCamera() };main.post(clock)
     }
     override fun onPause() {
-        resumed=false;main.removeCallbacks(clock)
+        resumed=false;main.removeCallbacks(clock);cancelCountdown(false);wakeScreen(false)
         getSystemService(PowerManager::class.java).removeThermalStatusListener(thermalListener)
         retireEngine();super.onPause()
     }
@@ -712,9 +797,12 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(!active) { hot.reset();hotText=null;renderBanner() }
         updateHotUi()
         if(active) onStatus("Merekam · ${selected.label} · ${if(bake || cinema) "warna tersimpan" else "LUT pratinjau"}")
+        recordingTools(active)
     }
     override fun onSaved(video: SavedVideo) {
-        lastSaved=video
+        lastSaved=video;lastTake=video
+        saveMarks(video.name)
+        if(::takeBar.isInitialized) takeBar.visibility=View.VISIBLE
         val r=video.report
         onStatus(String.format(Locale.US,"Tersimpan · %.2f fps aktual%s",r.getDouble("actualFps"),if(r.getBoolean("steadyCadence")) "" else " · ritme frame tidak stabil"))
     }
@@ -722,9 +810,492 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         android.util.Log.e("TeGeVideo",message);stickyError=message
         if(!isDestroyed) { status.text=message;record.isEnabled=engine?.isReady==true;Toast.makeText(this,message,Toast.LENGTH_LONG).show() }
     }
+    override fun onPaused(paused: Boolean) {
+        if(isDestroyed) return
+        val now=SystemClock.elapsedRealtime()
+        if(paused) pausedSince=now else if(pausedSince>0L) { pausedTotal+=now-pausedSince;pausedSince=0L }
+        pauseButton.text=if(paused) "Lanjut" else "Jeda"
+        pauseButton.contentDescription=if(paused) "Lanjutkan rekaman" else "Jeda rekaman"
+        if(paused) { prompter.stop();flashNote("Rekaman dijeda. Ketuk Lanjut untuk meneruskan di berkas yang sama.") }
+        else if(prompterOn) prompter.start()
+        onStatus(if(paused) "Rekaman dijeda" else "Merekam · ${selected.label}")
+    }
     override fun onNotice(message: String) {
         android.util.Log.w("TeGeVideo",message)
         main.post { if(!isDestroyed) flashNote(message) }
+    }
+    // ===== 0.4: Dokumentasi and Bicara tools =====
+    private fun loadShootPrefs() {
+        countdown=prefs.getInt("countdown",0).let { if(it in listOf(0,3,5,10)) it else 0 }
+        prompterOn=prefs.getBoolean("prompterOn",false);prompterText=prefs.getString("prompterText","").orEmpty()
+        prompterSize=prefs.getInt("prompterSize",28).coerceIn(16,56);prompterSpeed=prefs.getInt("prompterSpeed",40).coerceIn(10,120)
+        guides=prefs.getBoolean("guides",false);mirror=prefs.getBoolean("mirror",true);fillLight=prefs.getBoolean("fillLight",false)
+        lockOnRecord=prefs.getBoolean("lockOnRecord",false);lightWarn=prefs.getBoolean("lightWarn",false)
+        lowerOn=prefs.getBoolean("lowerOn",false);lowerTitle=prefs.getString("lowerTitle","").orEmpty();lowerSub=prefs.getString("lowerSub","").orEmpty()
+        activityName=prefs.getString("activityName","").orEmpty();titleDate=prefs.getBoolean("titleDate",false)
+        windFilter=prefs.getBoolean("windFilter",false);saver=prefs.getBoolean("saver",false);zebra=prefs.getBoolean("zebra",false)
+        lowLight=prefs.getBoolean("lowLight",false);dimScreen=prefs.getBoolean("dimScreen",false);volumeKeys=prefs.getBoolean("volumeKeys",false)
+        bgImage=prefs.getBoolean("bgImage",false)
+    }
+    private fun saveShootPrefs() {
+        prefs.edit().putInt("countdown",countdown).putBoolean("prompterOn",prompterOn).putString("prompterText",prompterText)
+            .putInt("prompterSize",prompterSize).putInt("prompterSpeed",prompterSpeed).putBoolean("guides",guides).putBoolean("mirror",mirror)
+            .putBoolean("fillLight",fillLight).putBoolean("lockOnRecord",lockOnRecord).putBoolean("lightWarn",lightWarn)
+            .putBoolean("lowerOn",lowerOn).putString("lowerTitle",lowerTitle).putString("lowerSub",lowerSub)
+            .putString("activityName",activityName).putBoolean("titleDate",titleDate).putBoolean("windFilter",windFilter)
+            .putBoolean("saver",saver).putBoolean("zebra",zebra).putBoolean("lowLight",lowLight).putBoolean("dimScreen",dimScreen)
+            .putBoolean("volumeKeys",volumeKeys).putBoolean("bgImage",bgImage).apply()
+    }
+    private fun recButton(value: String,tagName: String,action: ()->Unit)=button(value,tagName,action).apply { background=shape(Color.argb(175,0,0,0),14);textSize=13f }
+    /** Preview-only helpers (teleprompter, guides, fill light) follow the current choices. */
+    private fun applyToolViews() {
+        if(!::prompter.isInitialized) return
+        prompter.script=prompterText;prompter.sizeSp=prompterSize;prompter.speedDp=prompterSpeed
+        prompter.visibility=if(prompterOn && prompterText.isNotBlank()) View.VISIBLE else View.GONE
+        guideView.visibility=if(guides) View.VISIBLE else View.GONE;guideView.invalidate()
+        countdownText.visibility=if(countdownLeft>0) View.VISIBLE else View.GONE
+        if(countdownLeft>0) countdownText.text="$countdownLeft"
+        recBar.visibility=if(uiRecording) View.VISIBLE else View.GONE
+        pauseButton.text=if(engine?.isPaused==true) "Lanjut" else "Jeda"
+        updateFillUi()
+    }
+    /** Everything the renderer needs again after the camera (re)starts. */
+    private fun applyExtras(e: CameraEngine) {
+        e.mirror(mirror);e.zebra(zebra);e.overlay(buildOverlay());applyBackground(e)
+        lightState=LightCheck.State.OK;lightCandidate=LightCheck.State.OK;lightRepeat=0;lightText=null
+        val probe: ((FloatArray,Int,Int)->Unit)?=if(lightWarn) ({ lum,w,h -> val st=LightCheck.analyze(lum,w,h);main.post { onLight(st) } }) else null
+        e.lightCheck(probe)
+        updateFillUi()
+    }
+    private fun refreshOverlay() { engine?.overlay(buildOverlay()) }
+    /** Upright text layer at half the video size: title + date at the top, lower third at the bottom. */
+    private fun buildOverlay(): Bitmap? {
+        val top=if(titleDate) listOf(activityName.trim(),java.text.SimpleDateFormat("d MMMM yyyy",Locale.forLanguageTag("id-ID")).format(java.util.Date()))
+            .filter { it.isNotEmpty() }.joinToString(" · ") else null
+        val title=if(lowerOn) lowerTitle.trim().ifEmpty { null } else null
+        if(top.isNullOrEmpty() && title==null) return null
+        val turned=rotation()%180!=0
+        val w=((if(turned) selected.height else selected.width)/2).coerceAtLeast(64)
+        val h=((if(turned) selected.width else selected.height)/2).coerceAtLeast(64)
+        return runCatching { OverlayArt.draw(w,h,top,title,if(lowerOn) lowerSub.trim() else null) }.getOrNull()
+    }
+    private fun applyBackground(target: CameraEngine?=engine) {
+        val e=target ?: return
+        if(!bgImage) { e.background(null);return }
+        bgBitmap?.let { e.background(it);return }
+        val file=File(filesDir,"latar.jpg")
+        if(!file.exists()) { e.background(null);return }
+        io.execute {
+            val decoded=runCatching { BitmapFactory.decodeFile(file.path) }.getOrNull()
+            main.post { if(decoded!=null) { bgBitmap=decoded;if(bgImage) engine?.background(decoded) } }
+        }
+    }
+    private fun pickBackground() {
+        runCatching { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type="image/*";addCategory(Intent.CATEGORY_OPENABLE) },102) }
+            .onFailure { onError("Tidak ada aplikasi pemilih gambar.") }
+    }
+    private fun fillActive()=fillLight && cameras.getOrNull(cameraIndex)?.front==true
+    private fun updateFillUi() {
+        if(!::fillRing.isInitialized) return
+        fillRing.visibility=if(fillActive()) View.VISIBLE else View.GONE
+        applyBrightness()
+    }
+    private fun applyBrightness() {
+        window.attributes=window.attributes.apply {
+            screenBrightness=when { fillActive() -> 1f;dimmed -> .02f;else -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
+        }
+    }
+    private fun scheduleDim() {
+        main.removeCallbacks(dimRunnable)
+        if(dimScreen && uiRecording && !fillActive()) main.postDelayed(dimRunnable,6000)
+    }
+    private fun dimNow() {
+        if(!dimScreen || !uiRecording || fillActive()) return
+        dimmed=true;applyBrightness()
+    }
+    private fun wakeScreen(reschedule: Boolean) {
+        main.removeCallbacks(dimRunnable)
+        if(dimmed) { dimmed=false;applyBrightness() }
+        if(reschedule) scheduleDim()
+    }
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if(ev.actionMasked==MotionEvent.ACTION_DOWN && uiRecording) {
+            // The first touch on a dimmed screen only wakes it, so it cannot stop the recording by accident.
+            val wasDim=dimmed;wakeScreen(true)
+            if(wasDim) return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+    override fun onKeyDown(keyCode: Int,event: KeyEvent): Boolean {
+        if(volumeKeys && (keyCode==KeyEvent.KEYCODE_VOLUME_UP || keyCode==KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            if(event.repeatCount==0) { wakeScreen(uiRecording);onRecordPressed() }
+            return true
+        }
+        return super.onKeyDown(keyCode,event)
+    }
+    override fun onKeyUp(keyCode: Int,event: KeyEvent): Boolean {
+        if(volumeKeys && (keyCode==KeyEvent.KEYCODE_VOLUME_UP || keyCode==KeyEvent.KEYCODE_VOLUME_DOWN)) return true
+        return super.onKeyUp(keyCode,event)
+    }
+    private fun onRecordPressed() {
+        if(colorDock) closeColors()
+        if(countdownLeft>0) { cancelCountdown(true);return }
+        val e=engine ?: return
+        if(e.isRecording) { record.isEnabled=false;onStatus("Menyimpan dan memeriksa video…");e.stop() }
+        else if(ThermalPolicy.blocksStart(thermal)) flashNote(hotStartMessage)
+        else if(e.isReady && !e.busy) { if(countdown>0) startCountdown(countdown) else beginRecording() }
+    }
+    private fun videoBitrate()=(selected.bitrate*(if(saver) .55f else 1f)).toInt()
+    private fun recordOptions(): RecordOptions {
+        val stamp=java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS",Locale.US).format(java.util.Date())
+        return RecordOptions(if(saver) .55f else 1f,windFilter,ShotNames.folder(activityName),ShotNames.file(activityName,stamp))
+    }
+    private fun beginRecording() {
+        val e=engine ?: return
+        if(!e.isReady || e.busy || e.isRecording) return
+        if(ThermalPolicy.blocksStart(thermal)) { flashNote(hotStartMessage);return }
+        readBattery()
+        val minutes=ShotNames.minutesLeft(StatFs(filesDir.path).availableBytes,videoBitrate())
+        if(minutes<10) flashNote("Ruang tinggal ±$minutes menit video. Kosongkan penyimpanan bila acaranya panjang.")
+        else if(batteryPct<=15 && !charging) flashNote("Baterai $batteryPct%. Sambungkan pengisi daya untuk acara panjang.")
+        record.isEnabled=false;onStatus("Memulai rekaman…")
+        e.start(audio,audioMode,audioDeviceId,recordOptions())
+    }
+    private fun startCountdown(seconds: Int) {
+        countdownLeft=seconds;countdownText.text="$seconds";countdownText.visibility=View.VISIBLE
+        countdownText.contentDescription="Hitung mundur. Ketuk untuk membatalkan."
+        main.removeCallbacks(countdownTick);main.postDelayed(countdownTick,1000)
+    }
+    private fun tickCountdown() {
+        if(countdownLeft<=0) return
+        countdownLeft--
+        if(countdownLeft<=0) { countdownText.visibility=View.GONE;beginRecording() }
+        else { countdownText.text="$countdownLeft";main.postDelayed(countdownTick,1000) }
+    }
+    private fun cancelCountdown(announce: Boolean) {
+        if(countdownLeft<=0) return
+        countdownLeft=0;main.removeCallbacks(countdownTick)
+        if(::countdownText.isInitialized) countdownText.visibility=View.GONE
+        if(announce) flashNote("Hitung mundur dibatalkan.")
+    }
+    /** Recorded length shown to the user; paused time is not counted. */
+    private fun recordedMs(): Long {
+        val now=SystemClock.elapsedRealtime()
+        val paused=pausedTotal+(if(pausedSince>0L) now-pausedSince else 0L)
+        return (now-recordingSince-paused).coerceAtLeast(0L)
+    }
+    private fun togglePause() {
+        val e=engine ?: return
+        if(!e.isRecording) return
+        if(e.isPaused) e.resume() else e.pause()
+    }
+    private fun takePhoto() {
+        val e=engine ?: return
+        val stamp=java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS",Locale.US).format(java.util.Date())
+        e.photo(ShotNames.folder(activityName),ShotNames.file(activityName,stamp,"jpg")) { uri ->
+            if(uri!=null) flashNote("Foto tersimpan (Galeri HP › Pictures).") else onError("Foto gagal disimpan.")
+        }
+    }
+    private fun mmss(ms: Long)=String.format(Locale.US,"%02d:%02d",ms/60_000,ms/1000%60)
+    private fun addMark() {
+        if(engine?.isRecording!=true) return
+        val at=recordedMs();marks.add(at)
+        flashNote("Penanda ${marks.size} · ${mmss(at)}")
+    }
+    private fun saveMarks(name: String) {
+        if(marks.isEmpty()) return
+        runCatching { File(filesDir,"marks").apply { mkdirs() }.let { File(it,"$name.json").writeText(JSONArray(marks.toList()).toString()) } }
+    }
+    private fun loadMarks(name: String): List<Long> = runCatching {
+        val a=JSONArray(File(File(filesDir,"marks"),"$name.json").readText());(0 until a.length()).map { a.getLong(it) }
+    }.getOrDefault(emptyList())
+    private fun lockForTalk() {
+        val c=cameras.getOrNull(cameraIndex) ?: return
+        if(selected.highSpeed || controls.iso>0) return
+        savedLocks=controls.aeLock to controls.awbLock
+        controls=controls.copy(aeLock=c.characteristics[C.CONTROL_AE_LOCK_AVAILABLE]==true || controls.aeLock,awbLock=c.characteristics[C.CONTROL_AWB_LOCK_AVAILABLE]==true || controls.awbLock)
+        engine?.update(controls)
+    }
+    private fun unlockAfterTalk() {
+        val saved=savedLocks ?: return
+        savedLocks=null;controls=controls.copy(aeLock=saved.first,awbLock=saved.second);engine?.update(controls)
+    }
+    private fun recordingTools(active: Boolean) {
+        if(!::recBar.isInitialized) return
+        if(active) {
+            pausedTotal=0L;pausedSince=0L;marks.clear();lastTake=null
+            takeBar.visibility=View.GONE;recBar.visibility=View.VISIBLE;pauseButton.text="Jeda"
+            if(lockOnRecord) lockForTalk()
+            if(prompterOn && prompterText.isNotBlank()) { prompter.rewind();prompter.start() }
+            scheduleDim()
+        } else {
+            recBar.visibility=View.GONE;meter.visibility=View.GONE;clipText=null;batteryText=null
+            prompter.stop();unlockAfterTalk();wakeScreen(false);renderBanner()
+        }
+    }
+    private fun readBattery() {
+        runCatching {
+            val b=getSystemService(BatteryManager::class.java)
+            val level=b.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            if(level in 0..100) batteryPct=level
+            charging=b.isCharging
+        }
+    }
+    /** Twice a second: battery, clipping sound, automatic start on a face. */
+    private fun tickTools(e: CameraEngine?) {
+        val now=SystemClock.elapsedRealtime()
+        if(now-batteryAt>15_000) { batteryAt=now;readBattery() }
+        val rec=e?.isRecording==true
+        batteryText=if(rec && batteryPct<=10 && !charging) "Baterai $batteryPct%. Sambungkan pengisi daya atau simpan rekaman." else null
+        val clip=e?.lastClipNs ?: 0L
+        clipText=if(rec && audio!=0 && clip>0L && System.nanoTime()-clip<1_500_000_000L) "Suara pecah! Jauhkan mic atau kecilkan sumber suara." else null
+        if(::meter.isInitialized) meter.clipping=clipText!=null
+        if(autoFace && e!=null && e.isReady && !e.busy && !rec && countdownLeft==0 && !ThermalPolicy.blocksStart(thermal)) {
+            if(e.faceCount>0) faceSeen++ else faceSeen=0
+            if(faceSeen>=2) {
+                faceSeen=0;autoFace=false;controls=controls.copy(faceDetect=false);e.update(controls)
+                flashNote("Wajah terlihat, mulai merekam.")
+                if(countdown>0) startCountdown(countdown) else beginRecording()
+            }
+        } else faceSeen=0
+        renderBanner()
+    }
+    /** A warning appears only after the same result three seconds in a row. */
+    private fun onLight(state: LightCheck.State) {
+        if(!lightWarn) { lightText=null;return }
+        if(state==lightCandidate) lightRepeat++ else { lightCandidate=state;lightRepeat=1 }
+        if(lightRepeat>=3) lightState=state
+        lightText=when(lightState) {
+            LightCheck.State.DARK -> "Terlalu gelap. Tambah lampu atau hadapkan wajah ke cahaya."
+            LightCheck.State.BACKLIT -> "Membelakangi cahaya: wajah akan gelap. Pindah posisi atau tambah lampu dari depan."
+            else -> null
+        }
+        renderBanner()
+    }
+    private fun takeAction(id: String,uri: Uri,name: String) {
+        when(id) {
+            "take-discard" -> AlertDialog.Builder(this).setTitle("Buang video ini?").setMessage("$name\nVideo dihapus dari HP.")
+                .setPositiveButton("Buang") { _,_ -> io.execute {
+                    val ok=runCatching { contentResolver.delete(uri,null,null)>0 }.getOrDefault(false)
+                    main.post {
+                        if(ok) { onStatus("Take dibuang: $name");if(lastTake?.uri==uri) { lastTake=null;takeBar.visibility=View.GONE } }
+                        else onError("Video tidak bisa dihapus dari aplikasi. Hapus lewat Galeri HP.")
+                    }
+                } }.setNegativeButton("Batal",null).show()
+            "take-trim" -> showTrim(uri,name)
+            "take-silence" -> runSilenceCut(uri,name)
+            else -> runCatching {
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("video/mp4").putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),"Bagikan video"))
+                flashNote("WhatsApp mengecilkan video otomatis saat dikirim.")
+            }.onFailure { onError("Tidak ada aplikasi untuk berbagi.") }
+        }
+    }
+    private fun showTrim(uri: Uri,name: String) {
+        if(locked()) return
+        onStatus("Membaca video…")
+        io.execute {
+            runCatching { VideoEdit.info(this,uri) }.onSuccess { info -> main.post { trimDialog(uri,name,info) } }
+                .onFailure { e -> main.post { onError("Potong: ${e.message}") } }
+        }
+    }
+    private fun trimDialog(uri: Uri,name: String,info: VideoEdit.Info) {
+        val steps=(info.durationUs/100_000L).toInt().coerceAtLeast(1)
+        var startStep=0;var endStep=steps
+        fun fmt(step: Int)=String.format(Locale.US,"%d:%04.1f",step/600,(step%600)/10.0)
+        val panel=body()
+        val label=text("",14f,gold);panel.addView(label)
+        fun refresh() { label.text="Mulai ${fmt(startStep)} → Selesai ${fmt(endStep)} · durasi ${fmt(endStep-startStep)}" }
+        val startBar=SeekBar(this).apply { max=steps;progress=0;contentDescription="Titik mulai" }
+        val endBar=SeekBar(this).apply { max=steps;progress=steps;contentDescription="Titik selesai" }
+        startBar.setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar,value: Int,fromUser: Boolean) { startStep=value.coerceAtMost((endStep-5).coerceAtLeast(0));refresh() }
+            override fun onStartTrackingTouch(bar: SeekBar) {};override fun onStopTrackingTouch(bar: SeekBar) { bar.progress=startStep }
+        })
+        endBar.setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar,value: Int,fromUser: Boolean) { endStep=value.coerceAtLeast((startStep+5).coerceAtMost(steps));refresh() }
+            override fun onStartTrackingTouch(bar: SeekBar) {};override fun onStopTrackingTouch(bar: SeekBar) { bar.progress=endStep }
+        })
+        panel.addView(text("Mulai",13f));panel.addView(startBar,LinearLayout.LayoutParams(-1,dp(48)))
+        panel.addView(text("Selesai",13f));panel.addView(endBar,LinearLayout.LayoutParams(-1,dp(48)))
+        val saved=loadMarks(name)
+        if(saved.isNotEmpty()) {
+            panel.addView(text("Penanda: ketuk = mulai di sini, tahan = selesai di sini",12f,muted))
+            val markRow=LinearLayout(this)
+            saved.forEachIndexed { i,ms ->
+                val step=(ms/100).toInt().coerceIn(0,steps)
+                markRow.addView(button("P${i+1} ${mmss(ms)}","trim-mark-$i") { startBar.progress=step;startStep=step.coerceAtMost((endStep-5).coerceAtLeast(0));refresh() }.apply {
+                    setOnLongClickListener { endBar.progress=step;endStep=step.coerceAtLeast((startStep+5).coerceAtMost(steps));refresh();true }
+                },LinearLayout.LayoutParams(-2,dp(40)).apply { rightMargin=dp(5) })
+            }
+            panel.addView(HorizontalScrollView(this).apply { addView(markRow) })
+        }
+        panel.addView(text("Awal potongan dibulatkan ke titik kunci video terdekat (paling banyak ±1 detik lebih awal). Video asli tidak diubah; hasil disimpan sebagai berkas baru.",12f,muted))
+        refresh()
+        AlertDialog.Builder(this).setTitle("Potong · $name").setView(ScrollView(this).apply { addView(panel) })
+            .setPositiveButton("Simpan potongan") { _,_ ->
+                val end=if(endStep>=steps) info.durationUs+1_000_000L else endStep*100_000L
+                runCut(uri,name,listOf(longArrayOf(startStep*100_000L,end)),"potong",info)
+            }.setNegativeButton("Batal",null).show()
+    }
+    private fun runCut(uri: Uri,name: String,parts: List<LongArray>,suffix: String,info: VideoEdit.Info) {
+        onStatus("Memotong video…")
+        io.execute {
+            runCatching {
+                val snapped=SilenceCut.snap(parts,info.keyframesUs)
+                val outName="${name.substringBeforeLast('.')}_$suffix.mp4"
+                val temp=File(filesDir,"edit-$outName")
+                try {
+                    val length=VideoEdit.cut(this,uri,snapped,temp)
+                    val saved=VideoFiles.publish(this,temp,outName,JSONObject().put("editedFrom",name).put("parts",snapped.size),VideoFiles.relativePathOf(this,uri),false)
+                    saved to length
+                } finally { temp.delete() }
+            }.onSuccess { (saved,length) -> main.post {
+                onStatus(String.format(Locale.US,"Tersimpan: %s · %.1f detik",saved.name,length/1e6))
+                lastTake=saved;if(!uiRecording) takeBar.visibility=View.VISIBLE
+            } }.onFailure { e -> main.post { onError("Gagal memotong: ${e.message}") } }
+        }
+    }
+    private fun runSilenceCut(uri: Uri,name: String) {
+        if(locked()) return
+        val levels=VideoFiles.loadLevels(this,name)
+        if(levels==null || levels.isEmpty()) {
+            message("Rapikan bagian diam","Data suara untuk video ini tidak ada. Fitur ini hanya untuk video yang direkam dengan Cherry Video 0.4 ke atas memakai audio.");return
+        }
+        onStatus("Mencari bagian diam…")
+        io.execute {
+            runCatching {
+                val info=VideoEdit.info(this,uri)
+                val logEnd=levels.size*100_000L
+                val parts=SilenceCut.speech(levels,100_000L).map { longArrayOf(it[0],if(it[1]>=logEnd) info.durationUs+1_000_000L else it[1]) }
+                info to SilenceCut.snap(parts,info.keyframesUs)
+            }.onSuccess { (info,parts) -> main.post {
+                val keep=parts.sumOf { (minOf(it[1],info.durationUs)-it[0]).coerceAtLeast(0L) }
+                val cut=info.durationUs-keep
+                if(parts.isEmpty() || cut<1_500_000L) message("Rapikan bagian diam","Tidak ditemukan jeda diam yang cukup panjang (lebih dari ±1,5 detik) untuk dibuang.")
+                else AlertDialog.Builder(this).setTitle("Rapikan bagian diam")
+                    .setMessage(String.format(Locale.US,"Sekitar %.0f detik bagian diam akan dibuang (%d bagian bicara disambung). Awal tiap bagian dibulatkan ke titik kunci video, jadi jeda pendek bisa tetap ada. Video asli tidak diubah.",cut/1e6,parts.size))
+                    .setPositiveButton("Rapikan") { _,_ -> runCut(uri,name,parts,"rapi",info) }.setNegativeButton("Batal",null).show()
+            } }.onFailure { e -> main.post { onError("Rapikan: ${e.message}") } }
+        }
+    }
+    private fun askText(title: String,hint: String,initial: String,done: (String)->Unit) {
+        val input=EditText(this).apply { setText(initial);this.hint=hint;isSingleLine=true;setTextColor(Color.WHITE);setHintTextColor(muted) }
+        AlertDialog.Builder(this).setTitle(title).setView(FrameLayout(this).apply { setPadding(dp(20),dp(8),dp(20),0);addView(input) })
+            .setPositiveButton("Simpan") { _,_ -> done(input.text.toString()) }.setNegativeButton("Batal",null).show()
+    }
+    private fun choiceRow(panel: LinearLayout,options: List<Pair<String,Int>>,current: ()->Int,tagPrefix: String,pick: (Int)->Unit) {
+        val buttons=ArrayList<Pair<Int,Button>>()
+        fun refresh() { buttons.forEach { (value,b) ->
+            val on=current()==value
+            b.background=shape(if(on) gold else Color.rgb(34,42,47),10);b.setTextColor(if(on) Color.rgb(16,19,21) else Color.WHITE)
+        } }
+        val line=LinearLayout(this)
+        options.forEach { (name,value) ->
+            val b=button(name,"$tagPrefix-$value") { pick(value);refresh() }
+            buttons.add(value to b);line.addView(b,LinearLayout.LayoutParams(0,dp(40),1f).apply { rightMargin=dp(5) })
+        }
+        refresh();panel.addView(line)
+    }
+    private fun showDocTools() {
+        if(locked()) return
+        val panel=body()
+        panel.tag="doc-dock"
+        panel.addView(dockHeader("Dokumentasi kegiatan","doc-title","close-doc"))
+        panel.addView(button("Pakai preset Dokumentasi","doc-preset") { applyDocPreset() },LinearLayout.LayoutParams(-1,dp(44)).apply { bottomMargin=dp(4) })
+        panel.addView(button("Nama kegiatan: ${activityName.ifBlank { "(belum diisi)" }}","activity-name") {
+            askText("Nama kegiatan","Contoh: Upacara 17 Agustus",activityName) { value -> activityName=ShotNames.clean(value);saveShootPrefs();refreshOverlay();showDocTools() }
+        },LinearLayout.LayoutParams(-1,dp(44)))
+        panel.addView(text("Video dan foto disimpan di folder kegiatan (Movies/CherryVideo/nama), nama berkas diawali nama kegiatan.",12f,muted))
+        check(panel,"Judul kegiatan + tanggal di video",titleDate) { titleDate=it;saveShootPrefs();refreshOverlay() }
+        check(panel,"Filter angin (kurangi gemuruh angin)",windFilter) { windFilter=it;saveShootPrefs() }
+        check(panel,"Hemat ruang (berkas ±45% lebih kecil)",saver) { saver=it;saveShootPrefs() }
+        check(panel,"Zebra: tanda area terlalu terang (preview saja)",zebra) { zebra=it;saveShootPrefs();engine?.zebra(it) }
+        check(panel,"Mode cahaya redup (kurangi bintik)",lowLight) { lowLight=it;saveShootPrefs();controls=controls.copy(lowLight=it);engine?.update(controls) }
+        check(panel,"Layar redup saat merekam (hemat baterai)",dimScreen) { dimScreen=it;saveShootPrefs() }
+        check(panel,"Tombol volume untuk mulai/stop rekam",volumeKeys) { volumeKeys=it;saveShootPrefs() }
+        panel.addView(text("Saat merekam: Jeda/Lanjut, Foto, dan Tandai ada di sisi kanan preview; indikator suara di kiri atas. Peringatan baterai, sisa ruang, dan suara pecah muncul sendiri. Setelah merekam: Buang, Potong, Rapikan, Bagikan.",12f,muted))
+        openDock(panel)
+    }
+    private fun showTalkTools() {
+        if(locked()) return
+        val panel=body()
+        panel.tag="talk-dock"
+        panel.addView(dockHeader("Bicara (konten materi)","talk-title","close-talk"))
+        panel.addView(button("Pakai preset Bicara","talk-preset") { applyTalkPreset() },LinearLayout.LayoutParams(-1,dp(44)).apply { bottomMargin=dp(4) })
+        panel.addView(text("Hitung mundur sebelum merekam",14f))
+        choiceRow(panel,listOf("Mati" to 0,"3 dtk" to 3,"5 dtk" to 5,"10 dtk" to 10),{ countdown },"countdown") { countdown=it;saveShootPrefs() }
+        check(panel,"Teleprompter (tidak masuk video)",prompterOn) { prompterOn=it;saveShootPrefs();applyToolViews();if(it && prompterText.isBlank()) showPrompterSetup() }
+        panel.addView(button("Atur naskah, ukuran & kecepatan","prompter-setup") { showPrompterSetup() },LinearLayout.LayoutParams(-1,dp(44)))
+        check(panel,"Garis bantu posisi wajah/mata",guides) { guides=it;saveShootPrefs();applyToolViews() }
+        check(panel,"Cermin preview kamera depan",mirror) { mirror=it;saveShootPrefs();engine?.mirror(it) }
+        check(panel,"Layar sebagai lampu isi (kamera depan)",fillLight) { fillLight=it;saveShootPrefs();updateFillUi() }
+        check(panel,"Kunci exposure + WB saat merekam",lockOnRecord) { lockOnRecord=it;saveShootPrefs() }
+        check(panel,"Peringatan terlalu gelap / membelakangi cahaya",lightWarn) { lightWarn=it;saveShootPrefs();engine?.let { e -> applyExtras(e) };if(!it) { lightText=null;renderBanner() } }
+        check(panel,"Mulai otomatis saat wajah terlihat (sekali)",autoFace) { value ->
+            if(value && engine?.faceDetectAvailable!=true) { flashNote("Kamera ini tidak menawarkan deteksi wajah ke aplikasi.");autoFace=false;showTalkTools() }
+            else {
+                autoFace=value;faceSeen=0;controls=controls.copy(faceDetect=value);engine?.update(controls)
+                if(value) flashNote("Siaga: rekaman mulai sendiri saat wajah terlihat ±1 detik.")
+            }
+        }
+        check(panel,"Teks judul materi di video (lower third)",lowerOn) { lowerOn=it;saveShootPrefs();refreshOverlay();if(it && lowerTitle.isBlank()) showLowerSetup() }
+        panel.addView(button("Atur teks judul materi","lower-setup") { showLowerSetup() },LinearLayout.LayoutParams(-1,dp(44)))
+        panel.addView(text("Ganti latar dengan gambar: buka Bokeh › Latar › Gambar. Setelah merekam, tombol Rapikan membuang bagian diam dan Buang menghapus take yang gagal.",12f,muted))
+        openDock(panel)
+    }
+    private fun showPrompterSetup() {
+        val panel=body()
+        val input=EditText(this).apply {
+            setText(prompterText);hint="Tempel atau ketik naskah di sini";minLines=6;gravity=Gravity.TOP or Gravity.START
+            setTextColor(Color.WHITE);setHintTextColor(muted);tag="prompter-text"
+        }
+        panel.addView(input,LinearLayout.LayoutParams(-1,-2))
+        slider(panel,"Ukuran huruf $prompterSize",prompterSize-16,40) { v,label -> prompterSize=v+16;label.text="Ukuran huruf $prompterSize";prompter.sizeSp=prompterSize }
+        slider(panel,"Kecepatan gulir $prompterSpeed",prompterSpeed-10,110) { v,label -> prompterSpeed=v+10;label.text="Kecepatan gulir $prompterSpeed";prompter.speedDp=prompterSpeed }
+        panel.addView(text("Teleprompter hanya tampil di layar, tidak ikut masuk video. Mulai bergulir saat merekam (setelah hitung mundur); ketuk teks untuk berhenti/lanjut.",12f,muted))
+        AlertDialog.Builder(this).setTitle("Naskah teleprompter").setView(ScrollView(this).apply { addView(panel) })
+            .setPositiveButton("Simpan") { _,_ ->
+                prompterText=input.text.toString();if(prompterText.isNotBlank()) prompterOn=true
+                saveShootPrefs();applyToolViews();if(colorDock) showTalkTools()
+            }.setNegativeButton("Tutup") { _,_ -> saveShootPrefs();applyToolViews() }.show()
+    }
+    private fun showLowerSetup() {
+        val panel=body()
+        val title=EditText(this).apply { setText(lowerTitle);hint="Judul, contoh: Proklamasi Kemerdekaan";isSingleLine=true;setTextColor(Color.WHITE);setHintTextColor(muted) }
+        val sub=EditText(this).apply { setText(lowerSub);hint="Baris kedua (boleh kosong), contoh: Sejarah kelas XI";isSingleLine=true;setTextColor(Color.WHITE);setHintTextColor(muted) }
+        panel.addView(title);panel.addView(sub)
+        panel.addView(text("Teks tampil di kiri bawah dan ikut masuk video.",12f,muted))
+        AlertDialog.Builder(this).setTitle("Teks judul materi").setView(panel)
+            .setPositiveButton("Simpan") { _,_ ->
+                lowerTitle=title.text.toString().trim();lowerSub=sub.text.toString().trim();if(lowerTitle.isNotEmpty()) lowerOn=true
+                saveShootPrefs();refreshOverlay();if(colorDock) showTalkTools()
+            }.setNegativeButton("Batal",null).show()
+    }
+    private fun applyDocPreset() {
+        if(locked()) return
+        countdown=0;prompterOn=false;guides=false;fillLight=false;lockOnRecord=false;autoFace=false;lowerOn=false;lightWarn=false
+        windFilter=true;volumeKeys=true;titleDate=activityName.isNotBlank()
+        if(audio==0 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) audio=1
+        audioMode=AudioMode.NATURAL
+        prefs.edit().putInt("audio",audio).putInt("audioMode",audioMode.ordinal).apply()
+        saveShootPrefs();updateSelectionLabels();applyToolViews()
+        if(cameras.getOrNull(cameraIndex)?.front==true && hasBothFacings()) flipCamera()
+        else engine?.let { controls=controls.copy(faceDetect=false);it.update(controls);applyExtras(it) }
+        flashNote("Preset Dokumentasi: kamera belakang, filter angin, tombol volume rekam, audio Natural.")
+        showDocTools()
+    }
+    private fun applyTalkPreset() {
+        if(locked()) return
+        countdown=3;guides=true;mirror=true;lockOnRecord=true;lightWarn=true;windFilter=false
+        if(prompterText.isNotBlank()) prompterOn=true
+        if(audio==0 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) audio=1
+        if(AudioProcessor.available) audioMode=AudioMode.CLEAR
+        prefs.edit().putInt("audio",audio).putInt("audioMode",audioMode.ordinal).apply()
+        saveShootPrefs();updateSelectionLabels();applyToolViews()
+        if(cameras.getOrNull(cameraIndex)?.front!=true && hasBothFacings()) flipCamera()
+        else engine?.let { applyExtras(it) }
+        flashNote("Preset Bicara: kamera depan, hitung mundur 3 detik, garis bantu, kunci exposure+WB saat merekam${if(audioMode==AudioMode.CLEAR) ", Suara Jernih" else ""}.")
+        showTalkTools()
     }
     private fun locked(): Boolean {
         if(engine?.isRecording==true || engine?.busy==true) { Toast.makeText(this,"Selesaikan rekaman dahulu.",Toast.LENGTH_SHORT).show();return true };return false
@@ -899,6 +1470,23 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
         refreshSpeed();panel.addView(speedRow)
         check(panel,"Lihat topeng (uji, tidak masuk video)",bokehShowMask) { value -> bokehShowMask=value;engine?.tuneBokeh(bokehTuning()) }
+        panel.addView(text("Latar",14f))
+        val bgButtons=ArrayList<Pair<Boolean,Button>>()
+        fun refreshBg() { bgButtons.forEach { (image,b) ->
+            val on=bgImage==image
+            b.background=shape(if(on) gold else Color.rgb(34,42,47),10);b.setTextColor(if(on) Color.rgb(16,19,21) else Color.WHITE)
+        } }
+        val bgRow=LinearLayout(this)
+        listOf("Blur" to false,"Gambar" to true).forEach { (name,image) ->
+            val b=button(name,"bokeh-bg-${if(image) "image" else "blur"}") {
+                if(image && !File(filesDir,"latar.jpg").exists()) pickBackground()
+                else { bgImage=image;prefs.edit().putBoolean("bgImage",bgImage).apply();applyBackground();refreshBg() }
+            }
+            bgButtons.add(image to b);bgRow.addView(b,LinearLayout.LayoutParams(0,dp(40),1f).apply { rightMargin=dp(5) })
+        }
+        bgRow.addView(button("Pilih gambar","bokeh-bg-pick") { pickBackground() },LinearLayout.LayoutParams(0,dp(40),1f))
+        refreshBg();panel.addView(bgRow)
+        panel.addView(text("Gambar menggantikan latar di belakang orang (ikut masuk video). Pakai gambar mendatar untuk video mendatar.",12f,muted))
         panel.addView(text(why ?: "Latar diburamkan, orang tetap tajam. Tepi dibuat lembut dan blur bertambah perlahan menjauhi orang. Nilai F hanya simulasi (lensa HP tidak berubah). Hanya 1080p atau 720p 30 fps; 60 fps dan 4K tidak memakai Bokeh. Mengubah sakelar memulai ulang kamera sebentar. Bila tidak ada orang di gambar, video tetap tajam.",12f,muted))
         openDock(panel)
     }
@@ -941,7 +1529,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun renderBanner() {
         if(!::banner.isInitialized) return
-        val shown=hotText ?: fpsText
+        val shown=hotText ?: fpsText ?: clipText ?: batteryText ?: lightText
         banner.text=shown ?: ""
         banner.visibility=if(shown==null) View.GONE else View.VISIBLE
     }
@@ -1066,6 +1654,22 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
                 }.onSuccess { (parsed,name) -> main.post {
                     lut=parsed;lutName=name;persistGrade();onStatus("LUT diimpor: $name · ${parsed.size}³")
                 } }.onFailure { e -> main.post { onError("Impor LUT ditolak: ${e.message}") } }
+            }
+        } else if(requestCode==102) {
+            io.execute {
+                runCatching {
+                    val bytes=checkNotNull(contentResolver.openInputStream(uri)).use { it.readBytes() }
+                    val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
+                    BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
+                    var sample=1
+                    while(maxOf(bounds.outWidth,bounds.outHeight)/sample>2048) sample*=2
+                    val bitmap=checkNotNull(BitmapFactory.decodeByteArray(bytes,0,bytes.size,BitmapFactory.Options().apply { inSampleSize=sample })) { "Gambar tidak dapat dibaca." }
+                    File(filesDir,"latar.jpg").outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG,92,it) }
+                    bitmap
+                }.onSuccess { bitmap -> main.post {
+                    bgBitmap=bitmap;bgImage=true;prefs.edit().putBoolean("bgImage",true).apply();applyBackground()
+                    onStatus("Latar gambar dipilih");if(colorDock) showBokeh()
+                } }.onFailure { e -> main.post { onError("Latar gambar: ${e.message}") } }
             }
         } else if(requestCode==101) {
             io.execute { runCatching { checkNotNull(contentResolver.openOutputStream(uri,"wt")).use { it.write(exportJson.toByteArray()) } }
@@ -1320,22 +1924,35 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         io.execute {
             runCatching {
                 val items=ArrayList<Pair<String,Uri>>()
-                contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,arrayOf(MediaStore.Video.Media._ID,MediaStore.Video.Media.DISPLAY_NAME),
-                    "${MediaStore.Video.Media.RELATIVE_PATH} IN (?, ?)",arrayOf("Movies/CherryVideo/","Movies/TeGeVideo/"),"${MediaStore.Video.Media.DATE_ADDED} DESC")?.use { c ->
-                    while(c.moveToNext() && items.size<100) items.add(c.getString(1) to ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,c.getLong(0)))
+                contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,arrayOf(MediaStore.Video.Media._ID,MediaStore.Video.Media.DISPLAY_NAME,MediaStore.Video.Media.RELATIVE_PATH),
+                    "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Video.Media.RELATIVE_PATH}=?",arrayOf("Movies/CherryVideo/%","Movies/TeGeVideo/"),"${MediaStore.Video.Media.DATE_ADDED} DESC")?.use { c ->
+                    while(c.moveToNext() && items.size<100) {
+                        val sub=c.getString(2).orEmpty().removePrefix("Movies/CherryVideo/").removeSuffix("/").takeIf { it.isNotEmpty() && !it.startsWith("Movies/") }
+                        items.add((if(sub!=null) "$sub · ${c.getString(1)}" else c.getString(1)) to ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,c.getLong(0)))
+                    }
                 };items
             }.onSuccess { items -> main.post {
                 if(items.isEmpty()) message("Galeri","Belum ada rekaman Cherry Video.")
                 else AlertDialog.Builder(this).setTitle("Video Cherry").setItems(items.map { it.first }.toTypedArray()) { _,index ->
-                    runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(items[index].second,"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
-                        .onFailure { onError("Pasang pemutar video untuk membuka rekaman.") }
+                    val (label,uri)=items[index]
+                    val name=label.substringAfterLast(" · ")
+                    AlertDialog.Builder(this).setTitle(label).setItems(arrayOf("Putar","Potong","Rapikan bagian diam","Bagikan")) { _,action ->
+                        when(action) {
+                            0 -> runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
+                                .onFailure { onError("Pasang pemutar video untuk membuka rekaman.") }
+                            1 -> takeAction("take-trim",uri,name)
+                            2 -> takeAction("take-silence",uri,name)
+                            else -> takeAction("take-share",uri,name)
+                        }
+                    }.setNegativeButton("Tutup",null).show()
                 }.setNegativeButton("Tutup",null).show()
             } }.onFailure { e -> main.post { onError("Galeri: ${e.message}") } }
         }
     }
     @Deprecated("Legacy Activity API")
     override fun onBackPressed() {
-        if(engine?.isRecording==true) AlertDialog.Builder(this).setTitle("Simpan dan keluar?").setMessage("Rekaman akan dihentikan dan disimpan.").setPositiveButton("Simpan") { _,_ -> engine?.stop() }.setNegativeButton("Lanjut merekam",null).show()
+        if(countdownLeft>0) cancelCountdown(true)
+        else if(engine?.isRecording==true) AlertDialog.Builder(this).setTitle("Simpan dan keluar?").setMessage("Rekaman akan dihentikan dan disimpan.").setPositiveButton("Simpan") { _,_ -> engine?.stop() }.setNegativeButton("Lanjut merekam",null).show()
         else if(colorDock) closeColors()
         else if(drawerOpen) { drawerOpen=false;applyDrawerUi() }
         else super.onBackPressed()

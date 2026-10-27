@@ -1,5 +1,6 @@
 package id.tege.video.camera
 
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.opengl.*
 import android.os.Handler
@@ -73,6 +74,20 @@ class VideoRenderer(
     private var barsInVideo=false
     private var recordRotation=0
     private var noiseSeed=0
+    // 0.4: text overlay (title/date, lower third) and background picture, both in upright viewer coordinates.
+    private var overlayTexture=0
+    private var overlayOn=false
+    private var bgTexture=0
+    private var bgOn=false
+    private var bgAspect=1f
+    private var zebra=false
+    @Volatile private var hold=false
+    // Small offscreen copy for the brightness check, and a one-off full-size copy for "Foto".
+    private var lightFbo=0
+    private var lightTex=0
+    private var lightAt=0L
+    @Volatile var lightListener: ((FloatArray,Int,Int)->Unit)?=null
+    private var snapshotRequest: ((Bitmap?)->Unit)?=null
     private lateinit var texture: SurfaceTexture
     lateinit var input: Surface; private set
     private var width=1
@@ -143,8 +158,34 @@ class VideoRenderer(
         input=Surface(texture)
         uploadIdentity()
         uploadPlaceholders()
+        val more=IntArray(2); GLES30.glGenTextures(2,more,0); overlayTexture=more[0]; bgTexture=more[1]
+        for((unit,id) in listOf(GLES30.GL_TEXTURE4 to overlayTexture,GLES30.GL_TEXTURE5 to bgTexture)) {
+            GLES30.glActiveTexture(unit); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,id); setLinearClamp()
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA8,1,1,0,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,ByteBuffer.allocateDirect(4))
+        }
         checkGl()
     }
+    /** Upright, premultiplied text layer the size of the viewer's picture; null removes it. Drawn on preview and video. */
+    fun overlay(bitmap: Bitmap?) { sync {
+        current(window)
+        if(bitmap==null) { overlayOn=false;return@sync }
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE4); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,overlayTexture)
+        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D,0,bitmap,0); checkGl(); overlayOn=true
+    } }
+    /** Picture that replaces the background behind people (Bokeh "Latar gambar"); null returns to blur. */
+    fun background(bitmap: Bitmap?) { sync {
+        current(window)
+        if(bitmap==null) { bgOn=false;return@sync }
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE5); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,bgTexture)
+        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D,0,bitmap,0); checkGl()
+        bgAspect=bitmap.width.toFloat()/bitmap.height.coerceAtLeast(1); bgOn=true
+    } }
+    /** Stripes over almost-white areas, preview only. */
+    fun zebra(enabled: Boolean) { sync { zebra=enabled } }
+    /** Pause: frames stop going to the encoder while the preview keeps running. */
+    fun holdEncoder(value: Boolean) { sync { hold=value } }
+    /** Next frame as a full-size picture (same look as the video, bottom-up rows already flipped). Called on the GL thread. */
+    fun snapshot(done: (Bitmap?)->Unit) { sync { snapshotRequest=done } }
     /** The shader always declares the mask and blur samplers, so each needs a valid 2D texture on its unit even when Bokeh is off. */
     private fun uploadPlaceholders() {
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT,1)
@@ -190,6 +231,8 @@ class VideoRenderer(
         checkGl()
     }
     fun resize(w: Int,h: Int,degrees: Int,front: Boolean) { sync { width=w.coerceAtLeast(1);height=h.coerceAtLeast(1);rotation=degrees;mirrored=front } }
+    /** Mirror the preview only (the video is never mirrored). */
+    fun mirror(value: Boolean) { sync { mirrored=value } }
     fun grade(value: CubeLut?, intensity: Float, recordLut: Boolean, builtIn: Int) { sync {
         current(window)
         if(value?.sha256!=lut?.sha256) { if(value==null) uploadIdentity() else uploadCube(value.size,value.values) }
@@ -227,7 +270,7 @@ class VideoRenderer(
         check(encoder!=EGL14.EGL_NO_SURFACE) { "Encoder EGL surface unavailable" }
         recordRotation=((recordingRotation%360)+360)%360
         encoderEpochNs=epochNs
-        encoderGate=FrameGate(outputFps);renderedFrames=0L;lastEncodedTimestampNs=0L;firstEncodedTimestampNs=0L;encoding=true
+        encoderGate=FrameGate(outputFps);renderedFrames=0L;lastEncodedTimestampNs=0L;firstEncodedTimestampNs=0L;hold=false;encoding=true
     } }
     /** Keep the BufferQueue connected until the recorder has drained its pending frames. */
     fun pauseEncoder() { sync {
@@ -266,13 +309,15 @@ class VideoRenderer(
                 if(!previewReady) { previewReady=true;onPreviewReady() }
             }
             val monotonicStamp=frameClock.monotonic(stamp)
-            if(encoding && encoder!=EGL14.EGL_NO_SURFACE && monotonicStamp>=encoderEpochNs && encoderGate.accept(stamp)) {
+            if(encoding && !hold && encoder!=EGL14.EGL_NO_SURFACE && monotonicStamp>=encoderEpochNs && encoderGate.accept(stamp)) {
                 draw(encoder,sourceWidth,sourceHeight,false)
                 check(EGLExt.eglPresentationTimeANDROID(display,encoder,monotonicStamp-encoderEpochNs)) { "Encoder timestamp failed" }
                 check(EGL14.eglSwapBuffers(display,encoder)) { "Encoder swap failed" }
                 renderedFrames++;lastEncodedTimestampNs=frameClock.monotonic(stamp)
                 if(firstEncodedTimestampNs==0L) firstEncodedTimestampNs=lastEncodedTimestampNs
             }
+            snapshotRequest?.let { done -> snapshotRequest=null;takeSnapshot(done) }
+            if(lightListener!=null && started-lightAt>=1_000_000_000L) { lightAt=started;measureLight() }
             if(previewDrawn) {
                 if(statsStart==0L) statsStart=started
                 if(lastArrival!=0L) statsMaxGapNs=maxOf(statsMaxGapNs,started-lastArrival)
@@ -290,8 +335,10 @@ class VideoRenderer(
             }
         } catch(e: Exception) { closed=true;onFailure("Render GPU: ${e.cause?.message ?: e.message}") }
     }
-    private fun draw(surface: EGLSurface,w: Int,h: Int,isPreview: Boolean) {
-        current(surface); GLES30.glViewport(0,0,w,h); GLES30.glClearColor(0f,0f,0f,1f); GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+    private fun draw(surface: EGLSurface,w: Int,h: Int,isPreview: Boolean,fbo: Int=0) {
+        current(surface)
+        if(fbo!=0) GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,fbo)
+        GLES30.glViewport(0,0,w,h); GLES30.glClearColor(0f,0f,0f,1f); GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
         GLES30.glUseProgram(program)
         Matrix.setIdentityM(mvp,0)
         if(isPreview) {
@@ -334,8 +381,77 @@ class VideoRenderer(
         GLES30.glUniform1i(loc("uBars"),if(barsOn && (isPreview || barsInVideo)) 1 else 0)
         GLES30.glUniform1i(loc("uBarAxis"),if(barsAlongX) 1 else 0)
         GLES30.glUniform1f(loc("uBarVisible"),CinematicMath.barVisible(CinematicMath.uprightAspect(sourceWidth,sourceHeight,rotationShown)))
+        // Upright viewer coordinates: the preview is already upright; the video buffer is turned by its orientation tag.
+        val turns=if(isPreview) 0 else ((recordRotation/90)%4+4)%4
+        GLES30.glUniform1i(loc("uDispRot"),turns)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE4); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,overlayTexture)
+        GLES30.glUniform1i(loc("uOverlay"),4)
+        GLES30.glUniform1i(loc("uUseOverlay"),if(overlayOn) 1 else 0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE5); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,bgTexture)
+        GLES30.glUniform1i(loc("uBgImage"),5)
+        GLES30.glUniform1i(loc("uBgMode"),if(bgOn) 1 else 0)
+        val shown=if(isPreview) { val vp=TextureGeometry.viewport(w,h,sourceWidth,sourceHeight,rotation);vp[2].toFloat()/vp[3].coerceAtLeast(1) }
+            else if(turns%2==1) sourceHeight.toFloat()/sourceWidth else sourceWidth.toFloat()/sourceHeight
+        if(bgAspect>shown) GLES30.glUniform2f(loc("uBgScale"),shown/bgAspect,1f) else GLES30.glUniform2f(loc("uBgScale"),1f,bgAspect/shown)
+        GLES30.glUniform1i(loc("uZebra"),if(isPreview && zebra) 1 else 0)
         drawQuad(); checkGl()
+        if(fbo!=0) GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,0)
     }
+    private fun offscreen(w: Int,h: Int): IntArray {
+        val tex=IntArray(1); GLES30.glGenTextures(1,tex,0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE6); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,tex[0]); setLinearClamp()
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D,0,GLES30.GL_RGBA8,w,h,0,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,null)
+        val fbo=IntArray(1); GLES30.glGenFramebuffers(1,fbo,0)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,fbo[0])
+        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER,GLES30.GL_COLOR_ATTACHMENT0,GLES30.GL_TEXTURE_2D,tex[0],0)
+        val complete=GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)==GLES30.GL_FRAMEBUFFER_COMPLETE
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,0)
+        check(complete) { "framebuffer tidak lengkap" }
+        return intArrayOf(fbo[0],tex[0])
+    }
+    /** 32x18 copy of the picture, read back once a second for the dark / backlight warning. */
+    private fun measureLight() {
+        try {
+            if(lightFbo==0) { val o=offscreen(LIGHT_W,LIGHT_H);lightFbo=o[0];lightTex=o[1] }
+            draw(window,LIGHT_W,LIGHT_H,false,lightFbo)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,lightFbo)
+            val b=ByteBuffer.allocateDirect(LIGHT_W*LIGHT_H*4).order(ByteOrder.nativeOrder())
+            GLES30.glReadPixels(0,0,LIGHT_W,LIGHT_H,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,b)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,0)
+            val lum=FloatArray(LIGHT_W*LIGHT_H) { i ->
+                val r=(b.get(i*4).toInt() and 255)/255f;val g=(b.get(i*4+1).toInt() and 255)/255f;val bl=(b.get(i*4+2).toInt() and 255)/255f
+                .2126f*r+.7152f*g+.0722f*bl
+            }
+            lightListener?.invoke(lum,LIGHT_W,LIGHT_H)
+        } catch(e: Exception) {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,0);lightListener=null
+            onNotice("Cek cahaya dimatikan: ${e.message}")
+        }
+    }
+    private fun takeSnapshot(done: (Bitmap?)->Unit) {
+        var o: IntArray?=null
+        try {
+            o=offscreen(sourceWidth,sourceHeight)
+            draw(window,sourceWidth,sourceHeight,false,o[0])
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,o[0])
+            val b=ByteBuffer.allocateDirect(sourceWidth*sourceHeight*4).order(ByteOrder.nativeOrder())
+            GLES30.glReadPixels(0,0,sourceWidth,sourceHeight,GLES30.GL_RGBA,GLES30.GL_UNSIGNED_BYTE,b)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,0)
+            b.position(0)
+            val raw=Bitmap.createBitmap(sourceWidth,sourceHeight,Bitmap.Config.ARGB_8888).apply { copyPixelsFromBuffer(b) }
+            // GL rows start at the bottom; the video buffer is then turned upright by its orientation tag.
+            val m=android.graphics.Matrix().apply { postScale(1f,-1f);postRotate(recordRotation.toFloat()) }
+            val upright=Bitmap.createBitmap(raw,0,0,sourceWidth,sourceHeight,m,true)
+            if(upright!==raw) raw.recycle()
+            done(upright)
+        } catch(e: Exception) {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,0); done(null)
+        } finally {
+            o?.let { GLES30.glDeleteFramebuffers(1,intArrayOf(it[0]),0);GLES30.glDeleteTextures(1,intArrayOf(it[1]),0) }
+        }
+    }
+    /** Orientation used for "Foto" before any recording has set one. */
+    fun snapshotRotation(degrees: Int) { sync { if(!encoding) recordRotation=((degrees%360)+360)%360 } }
     private fun drawQuad() {
         vertices.position(0); GLES30.glEnableVertexAttribArray(0); GLES30.glVertexAttribPointer(0,2,GLES30.GL_FLOAT,false,16,vertices)
         vertices.position(2); GLES30.glEnableVertexAttribArray(1); GLES30.glVertexAttribPointer(1,2,GLES30.GL_FLOAT,false,16,vertices)
@@ -457,6 +573,8 @@ class VideoRenderer(
         thread.quitSafely()
     }
     companion object {
+        private const val LIGHT_W=32
+        private const val LIGHT_H=18
         private val VERTEX="""#version 300 es
             layout(location=0) in vec2 aPosition;
             layout(location=1) in vec2 aUv;
@@ -473,7 +591,17 @@ class VideoRenderer(
             uniform vec2 uMaskTexel; uniform float uThreshold; uniform float uFeather; uniform float uGrade; uniform int uShowMask;
             uniform float uGrain; uniform float uVignette; uniform float uSeed;
             uniform int uBars; uniform int uBarAxis; uniform float uBarVisible;
+            uniform highp sampler2D uOverlay; uniform int uUseOverlay; uniform int uDispRot;
+            uniform highp sampler2D uBgImage; uniform int uBgMode; uniform vec2 uBgScale; uniform int uZebra;
             in vec2 vUv; in vec2 vPos; out vec4 color;
+            // Point of the upright picture (0..1, y down) the viewer sees at this fragment.
+            vec2 dispUv(){
+                vec2 b=vec2(vPos.x,1.-vPos.y);
+                if(uDispRot==1) return vec2(1.-b.y,b.x);
+                if(uDispRot==2) return vec2(1.-b.x,1.-b.y);
+                if(uDispRot==3) return vec2(b.y,1.-b.x);
+                return b;
+            }
             float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
             // Mask refined with the full-resolution picture: neighbours that look like the centre pixel count more,
             // so the edge follows hair and shoulders instead of the small mask's blocky outline. Only done near an edge.
@@ -502,9 +630,12 @@ class VideoRenderer(
                     float near=.25*(texture(uMask,vUv+vec2(r.x,r.y)).r+texture(uMask,vUv+vec2(-r.x,r.y)).r
                         +texture(uMask,vUv+vec2(r.x,-r.y)).r+texture(uMask,vUv+vec2(-r.x,-r.y)).r);
                     float amount=(1.-person)*(1.-uGrade*.6*smoothstep(0.,.6,near))*uPresence;
+                    if(uBgMode==1) amount=(1.-person)*uPresence;
                     if(amount>.001){
-                        vec4 b=texture(uBlur,vUv);
-                        src=mix(src,b.rgb/max(b.a,.03),amount);
+                        vec3 bg;
+                        if(uBgMode==1) bg=texture(uBgImage,clamp(.5+(dispUv()-.5)*uBgScale,0.,1.)).rgb;
+                        else { vec4 b=texture(uBlur,vUv); bg=b.rgb/max(b.a,.03); }
+                        src=mix(src,bg,amount);
                     }
                     person*=uPresence;
                 }
@@ -547,6 +678,11 @@ class VideoRenderer(
                     outRgb+=n*uGrain*(1.-abs(l*2.-1.)*.6);
                 }
                 if(uShowMask==1) outRgb=mix(outRgb,vec3(.15,.9,.35),.45*person);
+                if(uZebra==1){
+                    float lz=dot(outRgb,vec3(.2126,.7152,.0722));
+                    if(lz>.95 && mod(floor((gl_FragCoord.x+gl_FragCoord.y)/7.),2.)<1.) outRgb=mix(outRgb,vec3(0.),.75);
+                }
+                if(uUseOverlay==1){ vec4 o=texture(uOverlay,dispUv()); outRgb=outRgb*(1.-o.a)+o.rgb; }
                 if(uBars==1){
                     float q=(uBarAxis==0)?vPos.y:vPos.x;
                     if(abs(q-.5)>uBarVisible*.5) outRgb=vec3(0.);

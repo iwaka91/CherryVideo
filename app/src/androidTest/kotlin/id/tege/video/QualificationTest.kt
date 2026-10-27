@@ -226,6 +226,49 @@ class QualificationTest {
             }
         }
     }
+    /** 0.4: Jeda/Lanjut stays in one synchronized file, and lossless Potong keeps sound and picture together. */
+    @Test fun pauseResumeAndLosslessCutStaySynchronized() {
+        val reader=ImageReader.newInstance(320,240,PixelFormat.RGBA_8888,4)
+        reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))
+        var failure: String?=null
+        val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
+        val file=File(evidence,"pause-resume.mp4")
+        val recorder=SurfaceRecorder(context,file,VideoProfile(320,240,30),false,1,0,100L*1024*1024,
+            onLimit={ failure="Unexpected test file limit" },onFailure={ failure=it },windFilter=true)
+        fun frames(count: Int,first: Int,second: Int) = repeat(count) { index ->
+            val canvas=renderer.input.lockCanvas(null)
+            canvas.drawColor(if(index%20<10) first else second)
+            renderer.input.unlockCanvasAndPost(canvas)
+            Thread.sleep(34)
+        }
+        try {
+            renderer.resize(320,240,0,false)
+            recorder.prepare();recorder.start()
+            renderer.attachEncoder(recorder.surface,recorder.epochNs)
+            frames(45,Color.RED,Color.BLUE)
+            assertTrue("Pause must be accepted once the file has started",recorder.pause())
+            renderer.holdEncoder(true)
+            frames(45,Color.GREEN,Color.WHITE)
+            renderer.holdEncoder(false)
+            assertTrue(recorder.resume())
+            frames(45,Color.YELLOW,Color.BLUE)
+            renderer.pauseEncoder();recorder.stop();renderer.detachEncoder()
+            assertNull(failure)
+            val report=VideoFiles.inspect(file,VideoProfile(320,240,30),true,0).put("recorderTiming",recorder.timingReport)
+            File(evidence,"pause-resume.json").writeText(report.toString(2))
+            assertEquals(1,recorder.timingReport.getInt("pauses"))
+            assertTrue("Paused part must be cut out: ${report.getLong("containerDurationMs")} ms",report.getLong("containerDurationMs") in 2_000L..3_900L)
+            assertTrue(kotlin.math.abs(report.getLong("audioEndUs")-report.getLong("videoEndUs"))<400_000L)
+            assertTrue("Level log for Rapikan must exist",recorder.levelLog().isNotEmpty())
+            val cut=File(evidence,"pause-cut.mp4")
+            val info=id.tege.video.camera.VideoEdit.info(context,android.net.Uri.fromFile(file))
+            val parts=id.tege.video.core.SilenceCut.snap(listOf(longArrayOf(400_000L,2_000_000L)),info.keyframesUs)
+            id.tege.video.camera.VideoEdit.cut(context,android.net.Uri.fromFile(file),parts,cut)
+            val cutReport=VideoFiles.inspect(cut,VideoProfile(320,240,30),true,0)
+            File(evidence,"pause-cut.json").writeText(cutReport.toString(2))
+            assertTrue(cutReport.getInt("frames")>=30)
+        } finally { recorder.release();renderer.close();reader.close() }
+    }
     @Test fun gpuLutCornersAndHighlightsMatchCpuReference() {
         val reader=ImageReader.newInstance(320,240,PixelFormat.RGBA_8888,4)
         reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))

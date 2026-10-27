@@ -7,8 +7,8 @@ android {
         applicationId = "id.tege.video"
         minSdk = 29
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.3.4-beta"
+        versionCode = 13
+        versionName = "0.4.0-beta"
         manifestPlaceholders["appLabel"] = "Cherry Video"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

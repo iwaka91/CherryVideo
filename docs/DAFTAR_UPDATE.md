@@ -21,7 +21,27 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Catatan:** hasil emulator tidak membuktikan kecepatan atau kualitas Bokeh di Xiaomi 13T. Semua langkah menunggu perintah eksplisit ("Update Kode") sebelum kode diubah.
 
-## Status terbaru — 0.3.4-beta (Bokeh lebih halus) — 27 Okt 2026
+## Status terbaru — 0.4.0-beta (Dokumentasi & Bicara) — 27 Okt 2026
+
+**Hasil uji 0.3.3/0.3.4 di Xiaomi 13T (27 Okt):** ketuk fokus, kunci AE/AF, panel Fokus/Exposure/WB, toast "Menyimpan…", Cinematic: semua berjalan baik (laporan Pak Guru). Bokeh kamera depan: topeng akurat saat diam, sedikit tertinggal saat menoleh cepat; blur 6% wajah tajam. Kamera belakang: kipas angin masih dianggap orang, blur kasar (belum diputuskan). Uji mode bokeh sistem: 13T tidak menawarkan bokeh/nilai F ke aplikasi lain (jalur ditutup). Bokeh dijeda untuk pengujian.
+
+**Keputusan pengguna:** semua ide peningkatan untuk dua penggunaan (dokumentasi kegiatan; bicara sendiri menjelaskan materi) dibungkus dalam satu update.
+
+**Selesai di kode (belum diuji di Xiaomi; kompilasi dan uji hanya di CI):**
+- **Lainnya → Dokumentasi:** preset Dokumentasi (kamera belakang, filter angin, tombol volume rekam, audio Natural); nama kegiatan → folder `Movies/CherryVideo/<nama>` dan nama berkas diawali nama kegiatan; judul kegiatan + tanggal di video; filter angin (saring gemuruh <±100 Hz); hemat ruang (bitrate ±55%); zebra (preview saja); mode cahaya redup (peredam bintik terkuat, fps tetap); layar redup saat merekam (sentuhan pertama hanya menyalakan layar); tombol volume mulai/stop.
+- **Lainnya → Bicara:** preset Bicara (kamera depan, hitung mundur 3 dtk, garis bantu, kunci exposure+WB saat merekam, peringatan cahaya, Suara Jernih); hitung mundur Mati/3/5/10 (ketuk angka untuk batal); teleprompter (naskah, ukuran huruf, kecepatan; tidak masuk video; ketuk untuk berhenti/lanjut); garis bantu wajah/mata; cermin preview depan (bisa dimatikan); layar sebagai lampu isi (bingkai putih + layar paling terang, kamera depan); kunci exposure+WB saat merekam; peringatan terlalu gelap/membelakangi cahaya (diukur tiap detik, muncul setelah 3 detik sama); mulai otomatis saat wajah terlihat (sekali, hanya bila kamera menawarkan deteksi wajah); teks judul materi (lower third, ikut masuk video).
+- **Saat merekam (sisi kanan preview):** Jeda/Lanjut (berkas tetap satu, sambungan dimulai dari keyframe agar suara dan gambar tetap sinkron), Foto (JPEG ke `Pictures/CherryVideo…`, tampilan sama dengan video), Tandai (penanda waktu). Indikator level suara di kiri atas, merah + peringatan bila suara pecah. Peringatan baterai ≤10% dan sisa ruang (±menit) di baris info.
+- **Setelah merekam (bilah di atas tombol rekam) dan di Galeri:** Buang take terakhir (konfirmasi), Potong (tanpa encode ulang; awal dibulatkan ke keyframe ≤1 dtk; penanda bisa dipakai), Rapikan bagian diam (dari log level suara 100 ms yang direkam; jeda diam >±1,5 dtk dibuang; hanya video 0.4 ke atas), Bagikan (WhatsApp mengecilkan sendiri). Hasil edit = berkas baru di folder yang sama; asli tidak diubah.
+- **Bokeh → Latar: Blur | Gambar:** gambar pilihan menggantikan latar di belakang orang (ikut masuk video; perlu Bokeh aktif).
+- Galeri kini menampilkan juga video di folder kegiatan.
+- Uji JVM baru `ShootToolsTest` (jeda, filter angin, potong diam, cek cahaya, nama berkas); uji perangkat baru `pauseResumeAndLosslessCutStaySynchronized`.
+- Tidak diubah: penyimpanan dasar, sinkron A/V rekaman biasa, LUT, audio, Bokeh (selain opsi latar), Cinematic. Versi 0.4.0-beta (versionCode 13). Paket dan kunci uji tetap.
+
+**Belum dikerjakan / ditunda:** kompres ulang sendiri untuk WhatsApp (diganti Hemat Ruang + kompres bawaan WhatsApp); perluasan sensitivitas Bokeh kamera belakang; 24 fps; petunjuk shutter 1/48.
+
+**Yang perlu Bapak uji di HP:** Jeda/Lanjut lalu putar videonya (suara pas dengan gambar?); Foto saat merekam; posisi teks judul+tanggal dan lower third di video tegak dan mendatar, kamera depan dan belakang; teleprompter; hitung mundur; lampu isi; peringatan cahaya; mulai saat wajah terlihat (apakah 13T menawarkan deteksi wajah); Potong dan Rapikan bagian diam; latar gambar; filter angin di luar ruangan; hemat ruang (ukuran berkas). Risiko belum terbukti: arah teks/latar gambar di video (dihitung dari tag orientasi), dan foto saat merekam bisa membuat satu frame tersendat.
+
+## Riwayat — 0.3.4-beta (Bokeh lebih halus) — 27 Okt 2026
 
 **Hasil uji 0.3.3-beta di Xiaomi 13T (27 Okt):** kamera belakang: Bokeh salah mengira benda (motor, gerobak) sebagai orang, blur terlalu kasar. Kamera depan (dekat): cukup bagus, tetapi blur terlalu kuat (6% cukup) dan tepi kasar serta tertinggal saat orang bergerak. Kamera bawaan Xiaomi punya pengaturan nilai F pada mode bokeh. Langkah 3 (ketuk fokus, kunci, panel bawah) belum dilaporkan.
 

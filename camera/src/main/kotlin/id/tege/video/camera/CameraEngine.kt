@@ -35,6 +35,20 @@ data class Controls(
     val meterY: Float=-1f,
     /** AE/AF lock set by a long press on the preview (separate from the Exposure panel's own AE lock). */
     val lock: Boolean=false,
+    /** Face detection for "Mulai saat wajah terlihat". */
+    val faceDetect: Boolean=false,
+    /** "Mode cahaya redup": strongest noise reduction the camera offers; frame rate stays the same. */
+    val lowLight: Boolean=false,
+)
+
+/** Choices for one recording (0.4): lower bit rate, wind filter, activity folder and file name. */
+data class RecordOptions(
+    val bitrateScale: Float=1f,
+    val windFilter: Boolean=false,
+    /** Folder under Movies, for example "CherryVideo/Upacara". */
+    val folder: String="CherryVideo",
+    /** File name; empty means the usual Cherry_<time>.mp4. */
+    val fileName: String="",
 )
 
 interface CameraListener {
@@ -45,6 +59,8 @@ interface CameraListener {
     fun onError(message: String)
     /** Short, non-fatal message (for example Bokeh was switched off). */
     fun onNotice(message: String) {}
+    /** Recording paused (true) or continued (false). */
+    fun onPaused(paused: Boolean) {}
 }
 
 /** Camera and recorder ownership live on one serial executor. GL owns only surfaces and grading. */
@@ -89,6 +105,12 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     @Volatile private var closing=false
     @Volatile var lastSaved: SavedVideo?=null; private set
     @Volatile var lastError: String?=null; private set
+    @Volatile var isPaused=false; private set
+    @Volatile var faceCount=0; private set
+    private var mirrorPreview=true
+    private var options=RecordOptions()
+    val faceDetectAvailable: Boolean get()=::entry.isInitialized && (entry.characteristics[C.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES]?.any { it!=0 } ?: false)
+    val lastClipNs: Long get()=recorder?.lastClipNs ?: 0L
     lateinit var entry: CameraEntry; private set
     lateinit var profile: VideoProfile; private set
     var hevc=false; private set
@@ -118,7 +140,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                         }
                     } },onNotice={ message -> ui { listener.onNotice(message) } }) { message -> handler.post {
                     if(!closing) { if(isRecording) stopInternal();error(message) }
-                } }.apply { resize(w,h,rotation,entry.front) }
+                } }.apply { resize(w,h,rotation,entry.front && mirrorPreview);snapshotRotation(rotation) }
                 bokehStrength=bokehLevel;tuning=bokehTuning
                 if(bokeh) setupBokeh(rotation)
                 val manager=context.getSystemService(CameraManager::class.java)
@@ -173,6 +195,38 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private fun applyLook() {
         runCatching { renderer?.bokehLook(BokehLook.featherWidth(tuning.feather),tuning.grade,BokehLook.threshold(tuning.sensitivity),tuning.showMask) }
     }
+    /** Upright text layer (title/date, lower third) on preview and video; null removes it. Can change while recording. */
+    fun overlay(bitmap: android.graphics.Bitmap?) { handler.post { runCatching { renderer?.overlay(bitmap) } } }
+    /** Background picture behind people (needs Bokeh); null returns to blur. */
+    fun background(bitmap: android.graphics.Bitmap?) { handler.post { runCatching { renderer?.background(bitmap) } } }
+    fun zebra(enabled: Boolean) { handler.post { runCatching { renderer?.zebra(enabled) } } }
+    fun mirror(enabled: Boolean) { handler.post { mirrorPreview=enabled;runCatching { renderer?.mirror(::entry.isInitialized && entry.front && enabled) } } }
+    /** Luminance grid about once a second (GL thread); null stops the check. */
+    fun lightCheck(listener: ((FloatArray,Int,Int)->Unit)?) { handler.post { renderer?.lightListener=listener } }
+    /** Saves the next frame as a JPEG (same look as the video) in Pictures/<folder>. Result on the main thread. */
+    fun photo(folder: String,name: String,done: (android.net.Uri?)->Unit) { handler.post {
+        val r=renderer
+        if(r==null) { ui { done(null) };return@post }
+        if(!isRecording) r.snapshotRotation(orientation)
+        r.snapshot { bitmap ->
+            Thread({
+                val uri=bitmap?.let { runCatching { VideoFiles.publishPhoto(context,it,name,folder) }.getOrNull() }
+                bitmap?.recycle();ui { done(uri) }
+            },"Cherry-Photo").start()
+        }
+    } }
+    /** Pause keeps the same file; the camera and preview keep running. */
+    fun pause() { handler.post {
+        if(!isRecording || busy || isPaused) return@post
+        val rec=recorder ?: return@post
+        if(rec.pause()) { runCatching { renderer?.holdEncoder(true) };isPaused=true;ui { listener.onPaused(true) } }
+        else ui { listener.onNotice("Tunggu sebentar, rekaman baru saja dimulai atau dilanjutkan.") }
+    } }
+    fun resume() { handler.post {
+        if(!isRecording || !isPaused) return@post
+        runCatching { renderer?.holdEncoder(false) }
+        recorder?.resume();isPaused=false;ui { listener.onPaused(false) }
+    } }
     fun effects(grainAmount: Float,vignetteAmount: Float,bars: Boolean,inVideo: Boolean) { handler.post {
         if(isRecording || busy) return@post
         grain=grainAmount;vignette=vignetteAmount;barsOn=bars;barsInVideo=inVideo
@@ -287,6 +341,13 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         afLockApplied=afLockedNow
         b.set(CaptureRequest.CONTROL_AWB_MODE,controls.wb)
         if(entry.characteristics[C.CONTROL_AWB_LOCK_AVAILABLE]==true) b.set(CaptureRequest.CONTROL_AWB_LOCK,controls.awbLock)
+        val faceModes=entry.characteristics[C.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES] ?: intArrayOf()
+        if(faceModes.any { it!=0 }) b.set(CaptureRequest.STATISTICS_FACE_DETECT_MODE,
+            if(controls.faceDetect) (if(faceModes.contains(CaptureRequest.STATISTICS_FACE_DETECT_MODE_SIMPLE)) CaptureRequest.STATISTICS_FACE_DETECT_MODE_SIMPLE else faceModes.maxOrNull() ?: 0)
+            else CaptureRequest.STATISTICS_FACE_DETECT_MODE_OFF)
+        val noise=entry.characteristics[C.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES] ?: intArrayOf()
+        if(controls.lowLight && noise.contains(CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)) b.set(CaptureRequest.NOISE_REDUCTION_MODE,CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+        else if(noise.contains(CaptureRequest.NOISE_REDUCTION_MODE_FAST)) b.set(CaptureRequest.NOISE_REDUCTION_MODE,CaptureRequest.NOISE_REDUCTION_MODE_FAST)
         b.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,if(controls.stabilization==1 && entry.ois) 1 else 0)
         b.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,if(controls.stabilization==2 && entry.eis) 1 else 0)
         if(entry.characteristics[C.FLASH_INFO_AVAILABLE]==true) b.set(CaptureRequest.FLASH_MODE,if(controls.torch) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
@@ -300,6 +361,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 }
             activePhysicalId=if(entry.physical) entry.id else result[CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID]
             exposureInfo="ISO ${result[CaptureResult.SENSOR_SENSITIVITY]} · ${result[CaptureResult.SENSOR_EXPOSURE_TIME]} ns"
+            faceCount=if(controls.faceDetect) result[CaptureResult.STATISTICS_FACES]?.size ?: 0 else 0
         }
     }
     fun update(value: Controls) { handler.post {
@@ -325,9 +387,9 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     fun resize(w: Int,h: Int,rotation: Int) { handler.post {
         if(!isRecording) orientation=rotation
         maskStream?.degrees=rotation
-        runCatching { renderer?.resize(w,h,rotation,entry.front) }
+        runCatching { renderer?.resize(w,h,rotation,entry.front && mirrorPreview) }
     } }
-    fun start(audioSource: Int,audioMode: AudioMode=AudioMode.NATURAL,audioDeviceId: Int=0) { handler.post {
+    fun start(audioSource: Int,audioMode: AudioMode=AudioMode.NATURAL,audioDeviceId: Int=0,recordOptions: RecordOptions=RecordOptions()) { handler.post {
         if(closing || busy || isRecording || !isReady) return@post
         busy=true
         try {
@@ -335,12 +397,14 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             recordAudio=audioSource!=0
             requestedAudio=audioSource
             check(!recordAudio || context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) { "Izin mikrofon belum diberikan. Pilih Tanpa audio atau berikan izin." }
-            name="Cherry_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS",Locale.US).format(Date())}.mp4"
+            options=recordOptions;isPaused=false
+            name=recordOptions.fileName.ifEmpty { "Cherry_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS",Locale.US).format(Date())}.mp4" }
             pending=File(context.filesDir,"pending-$name")
             val rec=SurfaceRecorder(context,pending!!,profile,hevc,audioSource,orientation,
                 ((StatFs(context.filesDir.path).availableBytes-192L*1024*1024)/2).coerceAtMost(8L*1024*1024*1024),
                 onLimit={ handler.post { if(isRecording) stopInternal() } },
-                onFailure={ message -> handler.post { if(isRecording) stopInternal();error(message) } },audioMode=audioMode,audioDeviceId=audioDeviceId)
+                onFailure={ message -> handler.post { if(isRecording) stopInternal();error(message) } },audioMode=audioMode,audioDeviceId=audioDeviceId,
+                bitrate=(profile.bitrate*recordOptions.bitrateScale.coerceIn(.3f,1f)).toInt(),windFilter=recordOptions.windFilter && audioSource!=0)
             recorder=rec
             rec.prepare()
             encoderSurface=rec.surface
@@ -359,10 +423,12 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private fun stopInternal() {
         if(!isRecording || busy) return
         busy=true;isRecording=false;focus.cancel()
+        if(isPaused) { isPaused=false;ui { listener.onPaused(false) } }
         val stoppedAtNs=System.nanoTime()
         var submission=JSONObject()
         var stopped=false
         var timing=JSONObject()
+        var levels=IntArray(0)
         try {
             // Destroying EGL first disconnects the producer and frees queued buffers.
             // Stop submitting, drain both codecs to EOS, then release the EGL window.
@@ -379,6 +445,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         } catch(e: Exception) { error("Video belum dapat difinalisasi; berkas sementara dipertahankan: ${e.cause?.message ?: e.message}") }
         finally {
             timing=recorder?.timingReport ?: JSONObject()
+            levels=runCatching { recorder?.levelLog() }.getOrNull() ?: IntArray(0)
             runCatching { renderer?.detachEncoder() }
             runCatching { recorder?.release() };recorder=null;encoderSurface?.release();encoderSurface=null
         }
@@ -400,7 +467,9 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                     .put("audioSourceRequest",requestedAudio).put("lastSensorExposure",exposureInfo)
                     .put("captureFps",profile.captureFps).put("highSpeed",profile.highSpeed).put("preview",previewStats)
                     .put("encoderSubmission",submission).put("recorderTiming",timing)
-                val saved=VideoFiles.publish(context,file,name,report)
+                    .put("folder",options.folder).put("windFilter",options.windFilter).put("bitrateScale",options.bitrateScale.toDouble())
+                val saved=VideoFiles.publish(context,file,name,report,"Movies/${options.folder}")
+                if(levels.isNotEmpty()) runCatching { VideoFiles.saveLevels(context,name,levels) }
                 attempt.put("published",true);saveAttempt()
                 lastSaved=saved;ui { listener.onSaved(saved) }
             } catch(e: Exception) {
