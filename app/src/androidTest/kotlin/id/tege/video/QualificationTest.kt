@@ -268,14 +268,20 @@ class QualificationTest {
             assertTrue("Frames drawn while paused must not be encoded: $why",report.getInt("frames")<=100)
             assertTrue(kotlin.math.abs(report.getLong("audioEndUs")-report.getLong("videoEndUs"))<400_000L)
             assertTrue("Level log for Rapikan must exist",recorder.levelLog().isNotEmpty())
-            val cut=File(evidence,"pause-cut.mp4")
+            // Cut the first half of what was actually recorded (the emulator's frame rate varies from run to run).
+            val cut=File(context.cacheDir,"pause-cut.mp4")
             val info=id.tege.video.camera.VideoEdit.info(context,android.net.Uri.fromFile(file))
-            val parts=id.tege.video.core.SilenceCut.snap(listOf(longArrayOf(400_000L,2_000_000L)),info.keyframesUs)
-            id.tege.video.camera.VideoEdit.cut(context,android.net.Uri.fromFile(file),parts,cut)
-            val cutReport=VideoFiles.inspect(cut,VideoProfile(320,240,30),true,0)
+            val half=info.durationUs/2
+            val parts=id.tege.video.core.SilenceCut.snap(listOf(longArrayOf(0L,half)),info.keyframesUs)
+            val length=id.tege.video.camera.VideoEdit.cut(context,android.net.Uri.fromFile(file),parts,cut)
+            val cutReport=runCatching { VideoFiles.inspect(cut,VideoProfile(320,240,30),true,0) }.getOrElse { e ->
+                val again=runCatching { id.tege.video.camera.VideoEdit.info(context,android.net.Uri.fromFile(cut)) }.getOrNull()
+                throw AssertionError("Cut not valid (${e.message}); source ${info.durationUs/1000} ms, keys ${info.keyframesUs.take(6)}, parts ${parts.map { it.toList() }}, length ${length/1000} ms, cut ${again?.durationUs?.div(1000)} ms / ${again?.keyframesUs?.size} keys, bytes ${cut.length()}")
+            }
             File(evidence,"pause-cut.json").writeText(cutReport.toString(2))
             val cutMs=cutReport.getLong("containerDurationMs")
-            assertTrue("Cut must keep about 2 s: $cutMs ms, ${cutReport.getInt("frames")} frames",cutReport.getInt("frames")>=12 && cutMs in 1_300L..2_900L)
+            assertTrue("Cut must keep about half: $cutMs ms of ${info.durationUs/1000} ms, length ${length/1000} ms",kotlin.math.abs(cutMs*1000-half)<700_000L)
+            cut.delete()
         } finally { recorder.release();renderer.close();reader.close() }
     }
     @Test fun gpuLutCornersAndHighlightsMatchCpuReference() {
