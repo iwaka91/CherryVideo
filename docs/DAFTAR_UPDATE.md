@@ -21,7 +21,28 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Catatan:** hasil emulator tidak membuktikan kecepatan atau kualitas Bokeh di Xiaomi 13T. Semua langkah menunggu perintah eksplisit ("Update Kode") sebelum kode diubah.
 
-## Status terbaru — 0.3.3-beta (Langkah 3: kontrol sentuh + panel bawah) — 26 Okt 2026
+## Status terbaru — 0.3.4-beta (Bokeh lebih halus) — 27 Okt 2026
+
+**Hasil uji 0.3.3-beta di Xiaomi 13T (27 Okt):** kamera belakang: Bokeh salah mengira benda (motor, gerobak) sebagai orang, blur terlalu kasar. Kamera depan (dekat): cukup bagus, tetapi blur terlalu kuat (6% cukup) dan tepi kasar serta tertinggal saat orang bergerak. Kamera bawaan Xiaomi punya pengaturan nilai F pada mode bokeh. Langkah 3 (ketuk fokus, kunci, panel bawah) belum dilaporkan.
+
+**Keputusan pengguna:** blur standar 6% tetapi bisa diubah; tepi lembut + blur bertahap; Bokeh tetap untuk kamera belakang juga; uji mode bokeh sistem; topeng mengikuti tepi gambar asli; tampilan nilai F; ditambah sensitivitas, ikut gerak Halus/Cepat, lihat topeng (uji), dan preset.
+
+**Selesai di kode (belum diuji di Xiaomi; kompilasi dan uji JVM hanya di CI):**
+- **Blur bawaan 6%:** nilai lama yang tersimpan diganti 6% satu kali saat pembaruan; setelah itu nilai pilihan Bapak disimpan.
+- **Nilai F:** slider tampil "Bukaan F13 · blur 6%" (0% = F16, 100% = F1.0). Hanya simulasi; lensa HP tidak berubah. Tombol Bokeh menampilkan nilai F saat aktif.
+- **Tepi lembut + blur bertahap:** peralihan orang ke latar berupa gradasi; latar dekat orang sedikit kurang buram, makin jauh makin buram.
+- **Topeng mengikuti tepi gambar asli:** di sekitar tepi, topeng kecil (640x360) dirapikan memakai warna gambar 1080p, sehingga rambut dan bahu lebih rapi. Hanya dihitung di daerah tepi agar beban GPU kecil.
+- **Sensitivitas deteksi orang** (bawaan 50%): turunkan bila benda ikut tajam, naikkan bila bagian tubuh ikut buram.
+- **Ikut gerak:** Halus (tepi tenang, sedikit tertinggal) atau Cepat (cepat mengikuti, tepi bisa berkedip).
+- **Preset:** Potret (6%), Sinematik (12%, tepi lebih lembut, gradasi kuat), Lembut (3%, tepi sangat lembut). Mengubah slider/ikut gerak membuat preset tidak terpilih (kustom).
+- **Lihat topeng (uji):** area orang diberi warna hijau di preview saja; tidak masuk video; mati lagi tiap aplikasi dibuka.
+- **Diagnostik → Uji mode bokeh sistem:** membaca (tanpa membuka kamera, tanpa merekam) apakah HP menawarkan bokeh video/foto sistem atau ekstensi Bokeh ke aplikasi lain; hasil + JSON.
+- Laporan video mencatat nilai F dan pengaturan Bokeh. Uji JVM baru: `BokehTuningTest`.
+- Tidak diubah: rekaman, audio, LUT, Cinematic, panas, Langkah 3. Versi 0.3.4-beta (versionCode 12). Paket dan kunci uji tidak berubah.
+
+**Yang perlu Bapak uji di HP:** kamera depan dan belakang dengan preset Potret; nyalakan Lihat topeng untuk melihat area orang; geser sensitivitas sampai motor/benda tidak ikut tajam; coba Halus vs Cepat saat bergerak; rekam 1–2 menit (suhu, FPS, sinkron suara); jalankan Uji mode bokeh sistem dan kirim hasilnya. Risiko belum terbukti: beban GPU dan panas perapian tepi, dan apakah sensitivitas cukup untuk salah deteksi di kamera belakang (model dibuat untuk swafoto).
+
+## Riwayat — 0.3.3-beta (Langkah 3: kontrol sentuh + panel bawah) — 26 Okt 2026
 
 **Selesai di kode (belum diuji di Xiaomi; kompilasi dan uji JVM hanya di CI):**
 - **Panel bawah:** Fokus / Pull, Exposure, WB (mode Pro) kini panel di bawah preview (sama seperti Bokeh/Cinematic), tidak lagi jendela yang menutupi gambar. Isi dan fungsi sama.

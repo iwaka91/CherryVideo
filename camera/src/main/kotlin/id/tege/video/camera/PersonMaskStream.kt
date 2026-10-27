@@ -42,6 +42,8 @@ class PersonMaskStream(
     val surface: Surface get() = reader.surface
     /** Clockwise turn that makes the camera image upright on screen; the model needs people upright. */
     @Volatile var degrees=90
+    /** Weight of the previous mask (Halus keeps more, Cepat follows movement sooner). */
+    @Volatile var keep=.55f
     @Volatile private var segmenter: ImageSegmenter?=null
     @Volatile private var working=true
     @Volatile private var closed=false
@@ -109,7 +111,7 @@ class PersonMaskStream(
             val mw=mask.width
             val mh=mask.height
             if(mw<=0 || mh<=0 || floats.limit()<mw*mh) return
-            val coverage=MaskMath.toCameraSpace(floats,mw,mh,width,height,turn,smoothed,.4f)
+            val coverage=MaskMath.toCameraSpace(floats,mw,mh,width,height,turn,smoothed,keep.coerceIn(0f,.9f))
             val target=MaskMath.presenceTarget(coverage)
             presence+=(target-presence)*(if(target>presence) .5f else .15f)
             onMask(smoothed,width,height,presence)
@@ -120,7 +122,7 @@ class PersonMaskStream(
     }
 
     fun info(): JSONObject = JSONObject().put("delegate","CPU").put("stream","${width}x$height").put("framesProcessed",processedFrames)
-        .put("meanMs",meanMs).put("maskCount",maskCount).put("working",working).put("error",lastError ?: JSONObject.NULL)
+        .put("meanMs",meanMs).put("maskCount",maskCount).put("keep",keep.toDouble()).put("working",working).put("error",lastError ?: JSONObject.NULL)
 
     override fun close() {
         if(closed) return

@@ -4,7 +4,13 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 ![Android qualification](https://github.com/iwaka91/CherryVideo/actions/workflows/android.yml/badge.svg)
 
-[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status terbaru 0.3.3-beta (kontrol sentuh).
+[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status terbaru 0.3.4-beta (Bokeh lebih halus).
+
+## Update 0.3.4
+
+- Bokeh: blur bawaan 6% dengan tampilan nilai F, tepi lembut yang mengikuti gambar asli, blur bertahap.
+- Preset Potret / Sinematik / Lembut, sensitivitas deteksi orang, ikut gerak Halus / Cepat, Lihat topeng (uji).
+- Diagnostik: Uji mode bokeh sistem.
 
 ## Update 0.3.3
 

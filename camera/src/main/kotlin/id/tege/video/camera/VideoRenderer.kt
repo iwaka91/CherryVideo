@@ -52,6 +52,11 @@ class VideoRenderer(
     private var bokehReady=false
     private var bokehFailed=false
     private var bokehStrength=.6f
+    // Edge look: soft edge width, graded blur near the person, person threshold, preview-only mask tint.
+    private var bokehFeather=.25f
+    private var bokehGrade=.55f
+    private var bokehThreshold=.5f
+    private var bokehShowMask=false
     private var maskReady=false
     private var maskW=0
     private var maskH=0
@@ -195,6 +200,11 @@ class VideoRenderer(
         bokehOn=enabled;bokehStrength=strength.coerceIn(0f,1f)
         if(!enabled) { maskReady=false;synchronized(maskLock) { maskDirty=false } }
     } }
+    /** Soft edge half-width, graded blur (0..1), person threshold (mask level) and preview-only mask tint. */
+    fun bokehLook(featherWidth: Float, grade: Float, threshold: Float, showMask: Boolean) { sync {
+        bokehFeather=featherWidth.coerceIn(.02f,.45f);bokehGrade=grade.coerceIn(0f,1f)
+        bokehThreshold=threshold.coerceIn(.1f,.9f);bokehShowMask=showMask
+    } }
     /** Person mask in camera-image orientation (one byte per pixel, 255 = person) and how sure we are somebody is in frame (0..1). */
     fun submitMask(data: ByteArray, w: Int, h: Int, presenceValue: Float) {
         val need=w*h
@@ -309,6 +319,11 @@ class VideoRenderer(
         GLES30.glUniform1i(loc("uBlur"),3)
         GLES30.glUniform1i(loc("uBokeh"),if(bokehOn && bokehReady && maskReady) 1 else 0)
         GLES30.glUniform1f(loc("uPresence"),presence)
+        GLES30.glUniform2f(loc("uMaskTexel"),1f/maskW.coerceAtLeast(1),1f/maskH.coerceAtLeast(1))
+        GLES30.glUniform1f(loc("uThreshold"),bokehThreshold)
+        GLES30.glUniform1f(loc("uFeather"),bokehFeather)
+        GLES30.glUniform1f(loc("uGrade"),bokehGrade)
+        GLES30.glUniform1i(loc("uShowMask"),if(isPreview && bokehShowMask) 1 else 0)
         // Film effects. The viewer's picture is the camera image turned by the preview rotation (preview) or by the recording
         // orientation (video); bars run along the viewer's top and bottom, which are the buffer's left and right in a portrait video.
         val rotationShown=if(isPreview) rotation else recordRotation
@@ -385,6 +400,7 @@ class VideoRenderer(
         GLES30.glActiveTexture(GLES30.GL_TEXTURE2); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,maskTexture)
         GLES30.glUniform1i(locOf(downProgram,"uMask"),2)
         GLES30.glUniform2f(locOf(downProgram,"uTexel"),1f/sourceWidth,1f/sourceHeight)
+        GLES30.glUniform1f(locOf(downProgram,"uThreshold"),bokehThreshold)
         drawQuad()
         GLES30.glUseProgram(blurProgram)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE3)
@@ -454,19 +470,43 @@ class VideoRenderer(
             uniform float uStrength; uniform float uSize;
             uniform int uUseLut; uniform int uLook; uniform vec3 uMin; uniform vec3 uMax;
             uniform int uBokeh; uniform float uPresence;
+            uniform vec2 uMaskTexel; uniform float uThreshold; uniform float uFeather; uniform float uGrade; uniform int uShowMask;
             uniform float uGrain; uniform float uVignette; uniform float uSeed;
             uniform int uBars; uniform int uBarAxis; uniform float uBarVisible;
             in vec2 vUv; in vec2 vPos; out vec4 color;
             float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+            // Mask refined with the full-resolution picture: neighbours that look like the centre pixel count more,
+            // so the edge follows hair and shoulders instead of the small mask's blocky outline. Only done near an edge.
+            float refinedMask(vec2 uv,vec3 c0){
+                float centre=texture(uMask,uv).r;
+                if(centre<.02 || centre>.98) return centre;
+                float acc=0.;float sum=0.;
+                for(int j=-1;j<=1;j++){
+                    for(int i=-1;i<=1;i++){
+                        vec2 o=vec2(float(i),float(j))*uMaskTexel*1.5;
+                        vec3 d=texture(uCamera,uv+o).rgb-c0;
+                        float w=exp(-dot(d,d)*30.)*((i==0 && j==0)?1.:.75);
+                        acc+=texture(uMask,uv+o).r*w;sum+=w;
+                    }
+                }
+                return acc/max(sum,1e-4);
+            }
             void main(){
                 vec3 src=texture(uCamera,vUv).rgb;
+                float person=0.;
                 if(uBokeh==1){
-                    float m=smoothstep(.3,.7,texture(uMask,vUv).r);
-                    m=mix(1.,m,uPresence);
-                    if(m<.999){
+                    float raw=refinedMask(vUv,src);
+                    person=smoothstep(uThreshold-uFeather,uThreshold+uFeather,raw);
+                    // Graded blur: right next to the person the background is blurred less, further away fully.
+                    vec2 r=uMaskTexel*10.;
+                    float near=.25*(texture(uMask,vUv+vec2(r.x,r.y)).r+texture(uMask,vUv+vec2(-r.x,r.y)).r
+                        +texture(uMask,vUv+vec2(r.x,-r.y)).r+texture(uMask,vUv+vec2(-r.x,-r.y)).r);
+                    float amount=(1.-person)*(1.-uGrade*.6*smoothstep(0.,.6,near))*uPresence;
+                    if(amount>.001){
                         vec4 b=texture(uBlur,vUv);
-                        src=mix(b.rgb/max(b.a,.03),src,m);
+                        src=mix(src,b.rgb/max(b.a,.03),amount);
                     }
+                    person*=uPresence;
                 }
                 vec3 outRgb=src;
                 if(uStrength>0. && (uUseLut==1 || uLook>0)){
@@ -506,6 +546,7 @@ class VideoRenderer(
                     float l=dot(outRgb,vec3(.2126,.7152,.0722));
                     outRgb+=n*uGrain*(1.-abs(l*2.-1.)*.6);
                 }
+                if(uShowMask==1) outRgb=mix(outRgb,vec3(.15,.9,.35),.45*person);
                 if(uBars==1){
                     float q=(uBarAxis==0)?vPos.y:vPos.x;
                     if(abs(q-.5)>uBarVisible*.5) outRgb=vec3(0.);
@@ -524,14 +565,14 @@ class VideoRenderer(
         private val DOWN_FRAGMENT="""#version 300 es
             #extension GL_OES_EGL_image_external_essl3 : require
             precision highp float;
-            uniform samplerExternalOES uCamera; uniform highp sampler2D uMask; uniform vec2 uTexel;
+            uniform samplerExternalOES uCamera; uniform highp sampler2D uMask; uniform vec2 uTexel; uniform float uThreshold;
             in vec2 vUv; out vec4 color;
             void main(){
                 vec4 acc=vec4(0.);
                 for(int i=0;i<4;i++){
                     vec2 o=vec2(((i&1)==0)?-1.:1.,((i&2)==0)?-1.:1.)*uTexel;
                     vec2 p=vUv+o;
-                    float w=1.-smoothstep(.05,.5,texture(uMask,p).r);
+                    float w=1.-smoothstep(max(uThreshold-.45,.0),uThreshold,texture(uMask,p).r);
                     acc+=vec4(texture(uCamera,p).rgb*w,w);
                 }
                 color=acc*.25;

@@ -70,6 +70,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private var requestedAudio=0
     private var maskStream: PersonMaskStream?=null
     private var bokehStrength=.6f
+    private var tuning=BokehTuning()
     private var grain=0f
     private var vignette=0f
     private var barsOn=false
@@ -99,7 +100,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private fun ui(block: ()->Unit) { main.post(block) }
     private fun error(message: String) { lastError=message;Log.e("TeGeVideo",message);ui { listener.onError(message) } }
     @SuppressLint("MissingPermission")
-    fun open(camera: CameraEntry,p: VideoProfile,h265: Boolean,surface: Surface,w: Int,h: Int,rotation: Int,bokeh: Boolean=false,bokehLevel: Float=.6f) {
+    fun open(camera: CameraEntry,p: VideoProfile,h265: Boolean,surface: Surface,w: Int,h: Int,rotation: Int,bokeh: Boolean=false,bokehLevel: Float=.6f,bokehTuning: BokehTuning=BokehTuning()) {
         handler.post {
             if(closing) return@post
             entry=camera;profile=p;hevc=h265;orientation=rotation
@@ -118,7 +119,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                     } },onNotice={ message -> ui { listener.onNotice(message) } }) { message -> handler.post {
                     if(!closing) { if(isRecording) stopInternal();error(message) }
                 } }.apply { resize(w,h,rotation,entry.front) }
-                bokehStrength=bokehLevel
+                bokehStrength=bokehLevel;tuning=bokehTuning
                 if(bokeh) setupBokeh(rotation)
                 val manager=context.getSystemService(CameraManager::class.java)
                 manager.openCamera(entry.openId,object: CameraDevice.StateCallback() {
@@ -146,8 +147,10 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             onMask={ data,maskW,maskH,presence -> renderer?.submitMask(data,maskW,maskH,presence) },
             onProblem={ message -> handler.post { disableBokeh(message) } })
         stream.degrees=rotation
+        stream.keep=BokehLook.keep(tuning.smooth)
         maskStream=stream
         renderer?.bokeh(true,bokehStrength)
+        applyLook()
         bokehActive=true
     }
     /** Runtime failure: show the sharp picture again. The stream stays attached (and keeps draining) so the camera session is not disturbed. */
@@ -161,6 +164,15 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         bokehStrength=value.coerceIn(0f,1f)
         if(bokehActive) runCatching { renderer?.bokeh(true,bokehStrength) }
     } }
+    /** Sensitivity, Halus/Cepat, soft edge, graded blur and the preview-only mask view; no camera restart needed. */
+    fun tuneBokeh(value: BokehTuning) { handler.post {
+        tuning=value
+        maskStream?.keep=BokehLook.keep(value.smooth)
+        applyLook()
+    } }
+    private fun applyLook() {
+        runCatching { renderer?.bokehLook(BokehLook.featherWidth(tuning.feather),tuning.grade,BokehLook.threshold(tuning.sensitivity),tuning.showMask) }
+    }
     fun effects(grainAmount: Float,vignetteAmount: Float,bars: Boolean,inVideo: Boolean) { handler.post {
         if(isRecording || busy) return@post
         grain=grainAmount;vignette=vignetteAmount;barsOn=bars;barsInVideo=inVideo
@@ -382,7 +394,8 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                     .put("zoom",appliedZoom.toDouble()).put("reportedZoom",reportedZoom?.toDouble() ?: JSONObject.NULL).put("device","${Build.MANUFACTURER} ${Build.MODEL}")
                     .put("androidApi",Build.VERSION.SDK_INT).put("lutSha256",lut?.sha256 ?: JSONObject.NULL)
                     .put("look",look).put("strength",intensity.toDouble()).put("baked",bake)
-                    .put("bokehActive",bokehActive).put("bokehStrength",bokehStrength.toDouble()).put("bokeh",bokehInfo)
+                    .put("bokehActive",bokehActive).put("bokehStrength",bokehStrength.toDouble()).put("bokehFNumber",BokehLook.fLabel(bokehStrength))
+                    .put("bokehTuning",JSONObject().put("sensitivity",tuning.sensitivity.toDouble()).put("smooth",tuning.smooth).put("feather",tuning.feather.toDouble()).put("grade",tuning.grade.toDouble()).put("showMask",tuning.showMask)).put("bokeh",bokehInfo)
                     .put("grain",grain.toDouble()).put("vignette",vignette.toDouble()).put("bars",barsOn).put("barsInVideo",barsInVideo)
                     .put("audioSourceRequest",requestedAudio).put("lastSensorExposure",exposureInfo)
                     .put("captureFps",profile.captureFps).put("highSpeed",profile.highSpeed).put("preview",previewStats)

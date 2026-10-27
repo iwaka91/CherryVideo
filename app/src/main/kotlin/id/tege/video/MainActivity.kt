@@ -88,7 +88,13 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var bake=true
     // Live Bokeh and Cinematic Look. The two switches start off at every launch; strengths and choices are remembered.
     private var bokeh=false
-    private var bokehStrength=.6f
+    private var bokehStrength=BokehLook.DEFAULT_STRENGTH
+    private var bokehSensitivity=.5f
+    private var bokehSmooth=true
+    private var bokehFeather=BokehPreset.POTRET.feather
+    private var bokehGrade=BokehPreset.POTRET.grade
+    private var bokehShowMask=false
+    private var bokehPreset: BokehPreset?=BokehPreset.POTRET
     private var cinema=false
     private var cinemaLook=4
     private var cinemaStrength=.7f
@@ -158,7 +164,12 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         audioMode=AudioMode.fromOrdinal(prefs.getInt("audioMode",0));audioDeviceId=prefs.getInt("audioDeviceId",0)
         selected=VideoProfile(prefs.getInt("width",1920),prefs.getInt("height",1080),prefs.getInt("fps",30),prefs.getInt("captureFps",30))
         look=prefs.getInt("look",0);strength=prefs.getFloat("strength",1f);bake=prefs.getBoolean("bake",true)
-        bokehStrength=prefs.getFloat("bokehStrength",.6f).coerceIn(0f,1f)
+        // 0.3.4: standard blur is 6% (F13). Older saved strengths are reset once; afterwards the user's own value is kept.
+        if(!prefs.getBoolean("bokehStandard6",false)) prefs.edit().putFloat("bokehStrength",BokehLook.DEFAULT_STRENGTH).putBoolean("bokehStandard6",true).apply()
+        bokehStrength=prefs.getFloat("bokehStrength",BokehLook.DEFAULT_STRENGTH).coerceIn(0f,1f)
+        bokehSensitivity=prefs.getFloat("bokehSensitivity",.5f).coerceIn(0f,1f);bokehSmooth=prefs.getBoolean("bokehSmooth",true)
+        bokehFeather=prefs.getFloat("bokehFeather",BokehPreset.POTRET.feather).coerceIn(0f,1f);bokehGrade=prefs.getFloat("bokehGrade",BokehPreset.POTRET.grade).coerceIn(0f,1f)
+        bokehPreset=BokehPreset.of(prefs.getString("bokehPreset",BokehPreset.POTRET.name))
         cinemaLook=if(prefs.getInt("cinemaLook",4)==5) 5 else 4;cinemaStrength=prefs.getFloat("cinemaStrength",.7f).coerceIn(0f,1f)
         cinemaBars=prefs.getBoolean("cinemaBars",false);cinemaBarsInVideo=prefs.getBoolean("cinemaBarsInVideo",false)
         val stored=prefs.getString("lut",null)
@@ -449,7 +460,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         stable.text="Stabilisasi · ${stabilizationLabel()}";stable.contentDescription=stable.text
         audioButton.text="Audio · ${audioLabel()}${if(audio!=0) "\n${audioMode.label}" else ""}";audioButton.contentDescription=audioButton.text
         colorTitle?.text="${gradeLabel()} · ${(strength*100).toInt()}%"
-        bokehButton.text="Bokeh (eksperimen)\n${bokehState()}";bokehButton.contentDescription=bokehButton.text
+        bokehButton.text="Bokeh (eksperimen)\n${bokehState()}${if(bokeh) " · ${BokehLook.fLabel(bokehStrength)}" else ""}";bokehButton.contentDescription=bokehButton.text
         cinemaButton.text="Cinematic\n${if(cinema) "Aktif" else "Mati"}";cinemaButton.contentDescription=cinemaButton.text
         lookButtons.forEachIndexed { index,b ->
             val active=lut==null && look==index
@@ -482,7 +493,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val e=CameraEngine(applicationContext,this);engine=e
         val useBokeh=bokeh && BokehPolicy.eligible(selected,camera.physical)
         if(bokeh && !useBokeh) BokehPolicy.reason(selected,camera.physical)?.let { flashNote(it) }
-        e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation(),useBokeh,bokehStrength)
+        e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation(),useBokeh,bokehStrength,bokehTuning())
         e.update(controls);applyGrade(e)
     }
     private fun setZoom(ratio: Float) {
@@ -838,6 +849,13 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         addView(text(title,14f,gold).apply { tag=titleTag;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END },LinearLayout.LayoutParams(0,dp(38),1f))
         addView(button("Tutup",closeTag) { closeColors() },LinearLayout.LayoutParams(dp(64),dp(38)))
     }
+    private fun bokehTuning()=BokehTuning(bokehStrength,bokehSensitivity,bokehSmooth,bokehFeather,bokehGrade,bokehShowMask)
+    private fun persistBokeh() {
+        prefs.edit().putFloat("bokehStrength",bokehStrength).putFloat("bokehSensitivity",bokehSensitivity).putBoolean("bokehSmooth",bokehSmooth)
+            .putFloat("bokehFeather",bokehFeather).putFloat("bokehGrade",bokehGrade).putString("bokehPreset",bokehPreset?.name ?: "").apply()
+        engine?.setBokehStrength(bokehStrength);engine?.tuneBokeh(bokehTuning())
+    }
+    private fun bokehStrengthLabel()="Bukaan ${BokehLook.fLabel(bokehStrength)} · blur ${(bokehStrength*100).toInt()}%"
     private fun showBokeh() {
         if(locked()) return
         val why=bokehReason()
@@ -845,11 +863,43 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         panel.tag="bokeh-dock"
         panel.addView(dockHeader("Bokeh (eksperimen)","bokeh-title","close-bokeh"))
         check(panel,"Bokeh latar (hanya orang)",bokeh && why==null,why==null) { value -> setBokeh(value) }
-        slider(panel,"Kekuatan blur ${(bokehStrength*100).toInt()}%",(bokehStrength*100).toInt(),100) { value,label ->
-            bokehStrength=value/100f;label.text="Kekuatan blur $value%"
-            prefs.edit().putFloat("bokehStrength",bokehStrength).apply();engine?.setBokehStrength(bokehStrength)
+        // Presets set the F value, the soft edge and the graded blur together; sensitivity and the mask view stay as they are.
+        val presetRow=LinearLayout(this)
+        val presetButtons=ArrayList<Pair<BokehPreset,Button>>()
+        fun refreshPresets() { presetButtons.forEach { (preset,b) ->
+            val on=bokehPreset==preset
+            b.background=shape(if(on) gold else Color.rgb(34,42,47),10);b.setTextColor(if(on) Color.rgb(16,19,21) else Color.WHITE)
+        } }
+        BokehPreset.entries.forEach { preset ->
+            val b=button(preset.label,"bokeh-preset-${preset.name.lowercase(Locale.US)}") {
+                val t=preset.apply(bokehTuning())
+                bokehStrength=t.strength;bokehFeather=t.feather;bokehGrade=t.grade;bokehSmooth=t.smooth;bokehPreset=preset
+                persistBokeh();onStatus("Bokeh: preset ${preset.label}");showBokeh()
+            }
+            presetButtons.add(preset to b);presetRow.addView(b,LinearLayout.LayoutParams(0,dp(40),1f).apply { rightMargin=dp(5) })
         }
-        panel.addView(text(why ?: "Latar diburamkan, orang tetap tajam. Hanya 1080p atau 720p 30 fps; 60 fps dan 4K tidak memakai Bokeh. Mengubah sakelar memulai ulang kamera sebentar. Bila tidak ada orang di gambar, video tetap tajam.",12f,muted))
+        refreshPresets();panel.addView(presetRow)
+        slider(panel,bokehStrengthLabel(),(bokehStrength*100).toInt(),100) { value,label ->
+            bokehStrength=value/100f;bokehPreset=null;label.text=bokehStrengthLabel();persistBokeh();refreshPresets();updateSelectionLabels()
+        }
+        slider(panel,"Sensitivitas deteksi orang ${(bokehSensitivity*100).toInt()}%",(bokehSensitivity*100).toInt(),100) { value,label ->
+            bokehSensitivity=value/100f;label.text="Sensitivitas deteksi orang $value%";persistBokeh()
+        }
+        panel.addView(text("Turunkan bila benda (motor, meja) ikut tajam; naikkan bila bagian tubuh ikut buram.",12f,muted))
+        panel.addView(text("Ikut gerak",14f))
+        val speeds=ArrayList<Pair<Boolean,Button>>()
+        fun refreshSpeed() { speeds.forEach { (smooth,b) ->
+            val on=bokehSmooth==smooth
+            b.background=shape(if(on) gold else Color.rgb(34,42,47),10);b.setTextColor(if(on) Color.rgb(16,19,21) else Color.WHITE)
+        } }
+        val speedRow=LinearLayout(this)
+        listOf("Halus" to true,"Cepat" to false).forEach { (name,smooth) ->
+            val b=button(name,"bokeh-speed-${if(smooth) "smooth" else "fast"}") { bokehSmooth=smooth;bokehPreset=null;persistBokeh();refreshSpeed();refreshPresets() }
+            speeds.add(smooth to b);speedRow.addView(b,LinearLayout.LayoutParams(0,dp(40),1f).apply { rightMargin=dp(5) })
+        }
+        refreshSpeed();panel.addView(speedRow)
+        check(panel,"Lihat topeng (uji, tidak masuk video)",bokehShowMask) { value -> bokehShowMask=value;engine?.tuneBokeh(bokehTuning()) }
+        panel.addView(text(why ?: "Latar diburamkan, orang tetap tajam. Tepi dibuat lembut dan blur bertambah perlahan menjauhi orang. Nilai F hanya simulasi (lensa HP tidak berubah). Hanya 1080p atau 720p 30 fps; 60 fps dan 4K tidak memakai Bokeh. Mengubah sakelar memulai ulang kamera sebentar. Bila tidak ada orang di gambar, video tetap tajam.",12f,muted))
         openDock(panel)
     }
     private fun showCinema() {
@@ -1217,6 +1267,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         panel.addView(button("Pilih lensa teknis (uji)","test-lens") { diagnosticDialog?.dismiss();chooseTestLens {} },LinearLayout.LayoutParams(-1,dp(46)))
         panel.addView(button("Uji telefoto (±40 detik)","tele-probe") { diagnosticDialog?.dismiss();runTelephotoProbe() },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
         panel.addView(button("Uji Bokeh (±15 detik)","bokeh-probe") { diagnosticDialog?.dismiss();runBokehProbe() },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
+        panel.addView(button("Uji mode bokeh sistem","system-bokeh-probe") { diagnosticDialog?.dismiss();runSystemBokehProbe() },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
         panel.addView(button("JSON lengkap","diagnostic-json") { message("Diagnostik JSON",exportJson) },LinearLayout.LayoutParams(-1,dp(46)).apply { topMargin=dp(5) })
         panel.addView(button("Ekspor JSON","export-diagnostic") {
             startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/json";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"CherryVideo-diagnostik.json") },101)
@@ -1229,6 +1280,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     /** Releases the app's camera, lets [BokehProbe] measure on-device person segmentation (no recording), then restarts the camera. */
     private fun runBokehProbe()=runProbe(ProbeKind("Uji Bokeh","Hasil uji Bokeh","Uji Bokeh… arahkan kamera belakang ke orang, jangan tutup aplikasi (±15 detik).",
         "bokeh-probe.json","CherryVideo-uji-bokeh.json") { BokehProbe.run(it) })
+    /** Only reads what the camera reports (system bokeh / nilai F for other apps); no recording. */
+    private fun runSystemBokehProbe()=runProbe(ProbeKind("Uji mode bokeh sistem","Hasil uji mode bokeh sistem","Membaca dukungan bokeh sistem…",
+        "system-bokeh-probe.json","CherryVideo-uji-bokeh-sistem.json") { SystemBokehProbe.run(it) })
     private class ProbeKind(val name: String,val resultTitle: String,val status: String,val saveName: String,val exportName: String,val task: (Context)->JSONObject)
     private fun runProbe(kind: ProbeKind) {
         if(locked() || probing) return
