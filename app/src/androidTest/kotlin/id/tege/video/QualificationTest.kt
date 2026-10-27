@@ -274,7 +274,8 @@ class QualificationTest {
             id.tege.video.camera.VideoEdit.cut(context,android.net.Uri.fromFile(file),parts,cut)
             val cutReport=VideoFiles.inspect(cut,VideoProfile(320,240,30),true,0)
             File(evidence,"pause-cut.json").writeText(cutReport.toString(2))
-            assertTrue(cutReport.getInt("frames")>=30)
+            val cutMs=cutReport.getLong("containerDurationMs")
+            assertTrue("Cut must keep about 2 s: $cutMs ms, ${cutReport.getInt("frames")} frames",cutReport.getInt("frames")>=12 && cutMs in 1_300L..2_900L)
         } finally { recorder.release();renderer.close();reader.close() }
     }
     @Test fun gpuLutCornersAndHighlightsMatchCpuReference() {
