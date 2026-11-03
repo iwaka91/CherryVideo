@@ -49,13 +49,14 @@ internal class LocationSource(private val context: Context, private val io: Exec
     fun providerOn(): Boolean = runCatching { manager?.isLocationEnabled == true }.getOrDefault(false)
 
     @Synchronized fun start() {
-        if (running || manager == null || !hasPermission()) return
+        val m = manager ?: return
+        if (running || !hasPermission()) return
         running = true
         runCatching {
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
-                if (!manager.isProviderEnabled(provider)) continue
-                manager.getLastKnownLocation(provider)?.let { accept(it) }
-                manager.requestLocationUpdates(provider, 2_000L, 0f, listener, Looper.getMainLooper())
+                if (!m.isProviderEnabled(provider)) continue
+                m.getLastKnownLocation(provider)?.let { accept(it) }
+                m.requestLocationUpdates(provider, 2_000L, 0f, listener, Looper.getMainLooper())
             }
         }.onFailure { running = false }
         lookUpPlace()
