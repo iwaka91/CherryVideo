@@ -117,6 +117,21 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var lowerSub=""
     private var activityName=""
     private var titleDate=false
+    // 0.5: location stamp in video and photos, and the on-screen snapshot effect for "Foto".
+    private var stampOn=false
+    private var stampTemplate=StampTemplate.KARTU
+    private var stampFields=StampFields()
+    private var snapEffect=true
+    private val locationSource by lazy { LocationSource(this,io) }
+    private var stampBuilt: StampContent?=null
+    private var stampBuiltTemplate=StampTemplate.KARTU
+    private var stampRefreshAt=0L
+    private var locState: LocationState?=null
+    private var locText: String?=null
+    private lateinit var stampButton: Button
+    private lateinit var snapFlash: View
+    private lateinit var snapThumb: ImageView
+    private val hideSnapThumb=Runnable { hideSnapThumbNow() }
     private var windFilter=false
     private var saver=false
     private var zebra=false
@@ -369,7 +384,14 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             tag="rec-bar";orientation=LinearLayout.VERTICAL;visibility=View.GONE
             addView(pauseButton,LinearLayout.LayoutParams(dp(68),dp(44)).apply { bottomMargin=dp(6) })
             addView(recButton("Foto","rec-photo") { takePhoto() },LinearLayout.LayoutParams(dp(68),dp(44)).apply { bottomMargin=dp(6) })
-            addView(recButton("Tandai","rec-mark") { addMark() },LinearLayout.LayoutParams(dp(68),dp(44)))
+            addView(recButton("Tandai","rec-mark") { addMark() },LinearLayout.LayoutParams(dp(68),dp(44)).apply { bottomMargin=dp(6) })
+            stampButton=recButton("Cap","rec-stamp") { cycleStamp() }.apply { visibility=if(stampOn) View.VISIBLE else View.GONE;contentDescription="Ganti template cap lokasi" }
+            addView(stampButton,LinearLayout.LayoutParams(dp(68),dp(44)))
+        }
+        snapFlash=View(this).apply { tag="snap-flash";setBackgroundColor(Color.WHITE);alpha=0f;visibility=View.GONE;importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        snapThumb=ImageView(this).apply {
+            tag="snap-thumb";visibility=View.GONE;scaleType=ImageView.ScaleType.CENTER_CROP;setPadding(dp(2),dp(2),dp(2),dp(2))
+            background=shape(Color.WHITE,8);contentDescription="Foto tersimpan"
         }
         val frame=FrameLayout(this).apply {
             addView(preview,FrameLayout.LayoutParams(-1,-1));addView(grid,FrameLayout.LayoutParams(-1,-1))
@@ -383,6 +405,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             addView(focusRing,FrameLayout.LayoutParams(dp(64),dp(64),Gravity.TOP or Gravity.START))
             addView(lockChip,FrameLayout.LayoutParams(-2,dp(36),Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin=dp(76) })
             addView(recBar,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL or Gravity.END).apply { rightMargin=dp(8) })
+            addView(snapFlash,FrameLayout.LayoutParams(-1,-1))
+            addView(snapThumb,FrameLayout.LayoutParams(dp(if(landscape) 72 else 90),dp(if(landscape) 96 else 120),Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(12),0,0,dp(64)) })
             addView(countdownText,FrameLayout.LayoutParams(-1,-1))
         }
         // After a recording: quick actions for the last take.
@@ -756,9 +780,12 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         updateHotUi()
         if(ThermalPolicy.blocksStart(thermal)) main.post { flashNote(hotStartMessage) }
         main.post { startCamera() };main.post(clock)
+        if(stampOn) locationSource.start()
     }
     override fun onPause() {
         resumed=false;main.removeCallbacks(clock);cancelCountdown(false);wakeScreen(false)
+        if(stampOn) locationSource.stop()
+        main.removeCallbacks(hideSnapThumb)
         getSystemService(PowerManager::class.java).removeThermalStatusListener(thermalListener)
         retireEngine();super.onPause()
     }
@@ -770,6 +797,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     override fun onRequestPermissionsResult(requestCode: Int,permissions: Array<out String>,results: IntArray) {
         super.onRequestPermissionsResult(requestCode,permissions,results)
+        if(requestCode==4) { locState=null;return }
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) audio=0
         if(requestCode==1) {
             cameras=runCatching { CameraCatalog.list(this) }.getOrDefault(emptyList())
@@ -836,6 +864,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         windFilter=prefs.getBoolean("windFilter",false);saver=prefs.getBoolean("saver",false);zebra=prefs.getBoolean("zebra",false)
         lowLight=prefs.getBoolean("lowLight",false);dimScreen=prefs.getBoolean("dimScreen",false);volumeKeys=prefs.getBoolean("volumeKeys",false)
         bgImage=prefs.getBoolean("bgImage",false)
+        stampOn=prefs.getBoolean("stampOn",false);stampTemplate=StampTemplate.of(prefs.getString("stampTemplate",null))
+        stampFields=StampFields(prefs.getBoolean("stampPlace",true),prefs.getBoolean("stampCoords",true),prefs.getBoolean("stampDate",true),prefs.getBoolean("stampTime",true))
+        snapEffect=prefs.getBoolean("snapEffect",true)
     }
     private fun saveShootPrefs() {
         prefs.edit().putInt("countdown",countdown).putBoolean("prompterOn",prompterOn).putString("prompterText",prompterText)
@@ -844,7 +875,10 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             .putBoolean("lowerOn",lowerOn).putString("lowerTitle",lowerTitle).putString("lowerSub",lowerSub)
             .putString("activityName",activityName).putBoolean("titleDate",titleDate).putBoolean("windFilter",windFilter)
             .putBoolean("saver",saver).putBoolean("zebra",zebra).putBoolean("lowLight",lowLight).putBoolean("dimScreen",dimScreen)
-            .putBoolean("volumeKeys",volumeKeys).putBoolean("bgImage",bgImage).apply()
+            .putBoolean("volumeKeys",volumeKeys).putBoolean("bgImage",bgImage)
+            .putBoolean("stampOn",stampOn).putString("stampTemplate",stampTemplate.name).putBoolean("stampPlace",stampFields.place)
+            .putBoolean("stampCoords",stampFields.coords).putBoolean("stampDate",stampFields.date).putBoolean("stampTime",stampFields.time)
+            .putBoolean("snapEffect",snapEffect).apply()
     }
     private fun recButton(value: String,tagName: String,action: ()->Unit)=button(value,tagName,action).apply { background=shape(Color.argb(175,0,0,0),14);textSize=13f }
     /** Preview-only helpers (teleprompter, guides, fill light) follow the current choices. */
@@ -873,11 +907,13 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         val top=if(titleDate) listOf(activityName.trim(),java.text.SimpleDateFormat("d MMMM yyyy",Locale.forLanguageTag("id-ID")).format(java.util.Date()))
             .filter { it.isNotEmpty() }.joinToString(" · ") else null
         val title=if(lowerOn) lowerTitle.trim().ifEmpty { null } else null
-        if(top.isNullOrEmpty() && title==null) return null
+        val stamp=stampContent()
+        stampBuilt=stamp;stampBuiltTemplate=stampTemplate
+        if(top.isNullOrEmpty() && title==null && stamp==null) return null
         val turned=rotation()%180!=0
         val w=((if(turned) selected.height else selected.width)/2).coerceAtLeast(64)
         val h=((if(turned) selected.width else selected.height)/2).coerceAtLeast(64)
-        return runCatching { OverlayArt.draw(w,h,top,title,if(lowerOn) lowerSub.trim() else null) }.getOrNull()
+        return runCatching { OverlayArt.draw(w,h,top,title,if(lowerOn) lowerSub.trim() else null,stamp,stampTemplate) }.getOrNull()
     }
     private fun applyBackground(target: CameraEngine?=engine) {
         val e=target ?: return
@@ -991,10 +1027,80 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun takePhoto() {
         val e=engine ?: return
+        if(snapEffect) snapFlashNow()
         val stamp=java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS",Locale.US).format(java.util.Date())
         e.photo(ShotNames.folder(activityName),ShotNames.file(activityName,stamp,"jpg")) { uri ->
-            if(uri!=null) flashNote("Foto tersimpan (Galeri HP › Pictures).") else onError("Foto gagal disimpan.")
+            if(uri!=null) { flashNote("Foto tersimpan (Galeri HP › Pictures).");if(snapEffect) showSnapThumb(uri) } else onError("Foto gagal disimpan.")
         }
+    }
+    // ===== 0.5: location stamp and snapshot effect =====
+    private fun setStampOn(value: Boolean) {
+        stampOn=value;saveShootPrefs()
+        if(value) {
+            if(!locationSource.hasPermission()) requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION),4)
+            else locationSource.start()
+        } else { locationSource.stop();locText=null;locState=null;renderBanner() }
+        if(::stampButton.isInitialized) stampButton.visibility=if(value) View.VISIBLE else View.GONE
+        refreshOverlay()
+    }
+    private fun chooseStampTemplate() {
+        if(locked()) return
+        val all=StampTemplate.values()
+        AlertDialog.Builder(this).setTitle("Template cap lokasi")
+            .setSingleChoiceItems(all.mapIndexed { i,t -> "${i+1} · ${t.label}\n${t.hint}" }.toTypedArray(),stampTemplate.ordinal) { dialog,which ->
+                stampTemplate=all[which];saveShootPrefs();refreshOverlay();dialog.dismiss();showDocTools()
+            }.setNegativeButton("Tutup",null).show()
+    }
+    /** The "Cap" button while recording: next template, effective at once in preview and video. */
+    private fun cycleStamp() {
+        if(!stampOn) return
+        stampTemplate=stampTemplate.next();saveShootPrefs();refreshOverlay()
+        flashNote("Cap lokasi: ${stampTemplate.label}")
+    }
+    /** What the stamp shows right now, or null when it is off or has nothing to show. */
+    private fun stampContent(): StampContent? {
+        if(!stampOn || !stampFields.any) return null
+        val fix=locationSource.fix()
+        val state=LocationStatus.classify(locationSource.hasPermission(),locationSource.providerOn(),fix)
+        val now=java.util.Date();val id=Locale.forLanguageTag("id-ID")
+        val content=StampText.content(stampFields,state,fix,locationSource.place,
+            java.text.SimpleDateFormat("d MMM yyyy",id).format(now),java.text.SimpleDateFormat("HH.mm z",id).format(now))
+        return content.takeIf { !it.isEmpty }
+    }
+    /** Twice a second: report signal problems and redraw the stamp when its text changed (at most every 2 seconds). */
+    private fun tickStamp() {
+        if(!stampOn) return
+        val fix=locationSource.fix()
+        val state=LocationStatus.classify(locationSource.hasPermission(),locationSource.providerOn(),fix)
+        if(LocationStatus.shouldNotify(locState,state) && state!=LocationState.SEARCHING)
+            flashNote(LocationStatus.message(state,fix) ?: "Sinyal lokasi kembali baik.")
+        locState=state
+        locText=LocationStatus.banner(state,fix,stampFields,locationSource.placeUnavailable)
+        val now=SystemClock.elapsedRealtime()
+        if((stampContent()!=stampBuilt || stampTemplate!=stampBuiltTemplate) && now-stampRefreshAt>=2000L) { stampRefreshAt=now;refreshOverlay() }
+    }
+    /** White flash on the screen only; it is never part of the video. */
+    private fun snapFlashNow() {
+        if(!::snapFlash.isInitialized) return
+        snapFlash.animate().cancel();snapFlash.alpha=.85f;snapFlash.visibility=View.VISIBLE
+        snapFlash.animate().alpha(0f).setDuration(240).withEndAction { snapFlash.visibility=View.GONE }.start()
+    }
+    private fun showSnapThumb(uri: Uri) {
+        if(!::snapThumb.isInitialized) return
+        io.execute {
+            val bitmap=runCatching { contentResolver.loadThumbnail(uri,android.util.Size(270,360),null) }.getOrNull()
+                ?: runCatching { contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply { inSampleSize=8 }) } }.getOrNull()
+            if(bitmap!=null) main.post { if(!isDestroyed) animateSnapThumb(bitmap) }
+        }
+    }
+    private fun animateSnapThumb(bitmap: Bitmap) {
+        main.removeCallbacks(hideSnapThumb);snapThumb.animate().cancel()
+        snapThumb.setImageBitmap(bitmap);snapThumb.translationX=0f;snapThumb.alpha=0f;snapThumb.scaleX=1.35f;snapThumb.scaleY=1.35f;snapThumb.visibility=View.VISIBLE
+        snapThumb.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(200).withEndAction { main.postDelayed(hideSnapThumb,1400) }.start()
+    }
+    private fun hideSnapThumbNow() {
+        if(!::snapThumb.isInitialized) return
+        snapThumb.animate().alpha(0f).translationX(-dp(110).toFloat()).setDuration(260).withEndAction { snapThumb.visibility=View.GONE }.start()
     }
     private fun mmss(ms: Long)=String.format(Locale.US,"%02d:%02d",ms/60_000,ms/1000%60)
     private fun addMark() {
@@ -1025,6 +1131,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(active) {
             pausedTotal=0L;pausedSince=0L;marks.clear();lastTake=null
             takeBar.visibility=View.GONE;recBar.visibility=View.VISIBLE;pauseButton.text="Jeda"
+            stampButton.visibility=if(stampOn) View.VISIBLE else View.GONE
             if(lockOnRecord) lockForTalk()
             if(prompterOn && prompterText.isNotBlank()) { prompter.rewind();prompter.start() }
             scheduleDim()
@@ -1058,6 +1165,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
                 if(countdown>0) startCountdown(countdown) else beginRecording()
             }
         } else faceSeen=0
+        tickStamp()
         renderBanner()
     }
     /** A warning appears only after the same result three seconds in a row. */
@@ -1207,12 +1315,25 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         },LinearLayout.LayoutParams(-1,dp(44)))
         panel.addView(text("Video dan foto disimpan di folder kegiatan (Movies/CherryVideo/nama), nama berkas diawali nama kegiatan.",12f,muted))
         check(panel,"Judul kegiatan + tanggal di video",titleDate) { titleDate=it;saveShootPrefs();refreshOverlay() }
+        check(panel,"Cap lokasi di video dan foto",stampOn) { setStampOn(it);showDocTools() }
+        if(stampOn) {
+            panel.addView(button("Template cap: ${stampTemplate.label} (ketuk untuk ganti)","stamp-template") { chooseStampTemplate() },LinearLayout.LayoutParams(-1,dp(44)))
+            check(panel,"Isi cap: nama tempat",stampFields.place) { stampFields=stampFields.copy(place=it);saveShootPrefs();refreshOverlay() }
+            check(panel,"Isi cap: koordinat",stampFields.coords) { stampFields=stampFields.copy(coords=it);saveShootPrefs();refreshOverlay() }
+            check(panel,"Isi cap: tanggal",stampFields.date) { stampFields=stampFields.copy(date=it);saveShootPrefs();refreshOverlay() }
+            check(panel,"Isi cap: jam",stampFields.time) { stampFields=stampFields.copy(time=it);saveShootPrefs();refreshOverlay() }
+            val fix=locationSource.fix()
+            val state=LocationStatus.classify(locationSource.hasPermission(),locationSource.providerOn(),fix)
+            panel.addView(text("Lokasi: ${LocationStatus.message(state,fix) ?: "sinyal baik."}",12f,muted))
+            panel.addView(text("Saat merekam, tombol Cap di sisi kanan preview mengganti template. Nama tempat butuh internet; tanpa internet cap memakai koordinat. Nama kegiatan punya kotak centang sendiri di atas.",12f,muted))
+        }
         check(panel,"Filter angin (kurangi gemuruh angin)",windFilter) { windFilter=it;saveShootPrefs() }
         check(panel,"Hemat ruang (berkas ±45% lebih kecil)",saver) { saver=it;saveShootPrefs() }
         check(panel,"Zebra: tanda area terlalu terang (preview saja)",zebra) { zebra=it;saveShootPrefs();engine?.zebra(it) }
         check(panel,"Mode cahaya redup (kurangi bintik)",lowLight) { lowLight=it;saveShootPrefs();controls=controls.copy(lowLight=it);engine?.update(controls) }
         check(panel,"Layar redup saat merekam (hemat baterai)",dimScreen) { dimScreen=it;saveShootPrefs() }
         check(panel,"Tombol volume untuk mulai/stop rekam",volumeKeys) { volumeKeys=it;saveShootPrefs() }
+        check(panel,"Efek snapshot saat Foto (kedip + foto kecil, hanya di layar)",snapEffect) { snapEffect=it;saveShootPrefs() }
         panel.addView(text("Saat merekam: Jeda/Lanjut, Foto, dan Tandai ada di sisi kanan preview; indikator suara di kiri atas. Peringatan baterai, sisa ruang, dan suara pecah muncul sendiri. Setelah merekam: Buang, Potong, Rapikan, Bagikan.",12f,muted))
         openDock(panel)
     }
@@ -1274,19 +1395,19 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun applyDocPreset() {
         if(locked()) return
         countdown=0;prompterOn=false;guides=false;fillLight=false;lockOnRecord=false;autoFace=false;lowerOn=false;lightWarn=false
-        windFilter=true;volumeKeys=true;titleDate=activityName.isNotBlank()
+        windFilter=true;volumeKeys=true;titleDate=activityName.isNotBlank();snapEffect=true
         if(audio==0 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) audio=1
         audioMode=AudioMode.NATURAL
         prefs.edit().putInt("audio",audio).putInt("audioMode",audioMode.ordinal).apply()
         saveShootPrefs();updateSelectionLabels();applyToolViews()
         if(cameras.getOrNull(cameraIndex)?.front==true && hasBothFacings()) flipCamera()
         else engine?.let { controls=controls.copy(faceDetect=false);it.update(controls);applyExtras(it) }
-        flashNote("Preset Dokumentasi: kamera belakang, filter angin, tombol volume rekam, audio Natural.")
+        flashNote("Preset Dokumentasi: kamera belakang, filter angin, tombol volume rekam, audio Natural, efek snapshot foto.")
         showDocTools()
     }
     private fun applyTalkPreset() {
         if(locked()) return
-        countdown=3;guides=true;mirror=true;lockOnRecord=true;lightWarn=true;windFilter=false
+        countdown=3;guides=true;mirror=true;lockOnRecord=true;lightWarn=true;windFilter=false;snapEffect=false
         if(prompterText.isNotBlank()) prompterOn=true
         if(audio==0 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) audio=1
         if(AudioProcessor.available) audioMode=AudioMode.CLEAR
@@ -1529,7 +1650,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun renderBanner() {
         if(!::banner.isInitialized) return
-        val shown=hotText ?: fpsText ?: clipText ?: batteryText ?: lightText
+        val shown=hotText ?: fpsText ?: clipText ?: batteryText ?: lightText ?: locText
         banner.text=shown ?: ""
         banner.visibility=if(shown==null) View.GONE else View.VISIBLE
     }

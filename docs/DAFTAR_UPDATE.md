@@ -21,7 +21,25 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Catatan:** hasil emulator tidak membuktikan kecepatan atau kualitas Bokeh di Xiaomi 13T. Semua langkah menunggu perintah eksplisit ("Update Kode") sebelum kode diubah.
 
-## Status terbaru — 0.4.0-beta (Dokumentasi & Bicara) — 27 Okt 2026
+## Status terbaru — 0.5.0-beta (Cap lokasi & efek snapshot) — 3 Nov 2026
+
+**Hasil uji 0.4.0-beta di Xiaomi 13T (3 Nov):** lolos (laporan Pak Guru). **Keputusan pengguna:** tambah cap lokasi dengan 8 template tata letak dan huruf; efek "snapshot" saat Foto, tanpa bunyi cekrek. Mockup: `docs/mockup/cap-lokasi-template.html` (8 template, versi menengah).
+
+**Selesai di kode (belum diuji di Xiaomi; kompilasi dan uji JVM hanya di CI):**
+- **Lainnya → Dokumentasi → "Cap lokasi di video dan foto"** (kotak centang, mati secara bawaan). Cap digambar ke lapisan teks yang sama dengan judul kegiatan, jadi otomatis ikut di preview, video, dan foto. Nama kegiatan tetap punya kotak centang sendiri ("Judul kegiatan + tanggal di video"). Bila keduanya aktif, tanggal bisa tampil dua kali (pilihan pengguna).
+- **Isi cap dipilih pengguna:** nama tempat, koordinat, tanggal, jam (empat kotak centang; semua hidup bawaannya). Tanggal memakai bahasa Indonesia, jam memakai zona HP (mis. WIB).
+- **8 template:** Polos, Kartu, Berita, Catatan, Laporan, Judul Tempat, Poster, Stempel. Dipilih sebelum merekam (tombol "Template cap" di panel Dokumentasi) dan **bisa diganti saat merekam** lewat tombol **Cap** di sisi kanan preview (berganti ke template berikutnya, langsung tampil di video). Cap menghindari baris judul+tanggal (atas) dan lower third (bawah). Huruf memakai jenis huruf bawaan Android (aplikasi tidak membawa berkas huruf); mockup memakai huruf Google sebagai pendekatan, jadi bentuk huruf bisa sedikit berbeda.
+- **Lokasi:** layanan lokasi bawaan HP (GPS dan jaringan), tanpa pustaka tambahan. Izin lokasi (tepat atau perkiraan) diminta saat kotak centang dinyalakan pertama kali. Pembaca lokasi hanya aktif saat cap menyala dan aplikasi terbuka. Nama tempat dicari lewat pencari alamat bawaan HP, **butuh internet**; tanpa internet cap memakai koordinat.
+- **Peringatan keterbatasan (banner di atas preview, tidak ikut masuk video):** izin lokasi belum diberikan; Lokasi HP mati; sedang mencari sinyal; sinyal lemah (ketelitian lebih dari 50 m; cap menampilkan "±N m"); lokasi sudah lebih dari 2 menit (cap diberi tanda "lokasi lama"); nama tempat butuh internet. Bila belum ada posisi sama sekali, cap menulis "Lokasi belum didapat" dan tetap memuat tanggal/jam; tidak pernah menampilkan tempat karangan. Catatan singkat di layar muncul saat keadaan berubah, termasuk saat sinyal pulih.
+- **Efek snapshot saat Foto (hanya di layar, tidak masuk video, tanpa bunyi cekrek):** layar berkedip putih sebentar, lalu foto kecil muncul di kiri bawah dan meluncur keluar. Kotak centang "Efek snapshot saat Foto" ada di panel Dokumentasi; hidup secara bawaan; preset Dokumentasi menghidupkannya dan preset Bicara mematikannya.
+- Uji JVM baru: `LocationStampTest` (template, status sinyal, isi cap, nama tempat, peringatan). Versi 0.5.0-beta (versionCode 14). Paket `id.tege.video.hotfix` dan kunci uji tidak berubah. Izin baru: ACCESS_FINE_LOCATION dan ACCESS_COARSE_LOCATION.
+- Tidak diubah: rekam, jeda/lanjut, sinkron A/V, orientasi preview, LUT, audio, Bokeh, Cinematic, penyimpanan.
+
+**Yang perlu Bapak uji di HP:** nyalakan cap lokasi dan beri izin; lihat tiap template di preview (potret dan mendatar, kamera belakang dan depan); rekam lalu putar videonya (cap terbaca, tidak terbalik, jam bertambah tiap menit); ganti template saat merekam dengan tombol Cap; ambil Foto saat merekam dan di luar rekaman (cap ikut di foto); uji di dalam gedung (sinyal lemah/peringatan), dengan internet mati (cap memakai koordinat), dan dengan Lokasi HP dimatikan; cek efek snapshot (kedip + foto kecil) dan pastikan kedipan tidak ikut di video. Risiko belum terbukti: arah/ukuran cap di video (dihitung dari tag orientasi, sama seperti judul kegiatan), ketelitian lokasi di dalam gedung, dan apakah pencari alamat bawaan 13T tersedia tanpa layanan Google.
+
+**Belum dikerjakan / ditunda (tetap):** kompres ulang untuk WhatsApp; sensitivitas Bokeh kamera belakang; 24 fps; petunjuk shutter 1/48.
+
+## Riwayat — 0.4.0-beta (Dokumentasi & Bicara) — 27 Okt 2026
 
 **Hasil uji 0.3.3/0.3.4 di Xiaomi 13T (27 Okt):** ketuk fokus, kunci AE/AF, panel Fokus/Exposure/WB, toast "Menyimpan…", Cinematic: semua berjalan baik (laporan Pak Guru). Bokeh kamera depan: topeng akurat saat diam, sedikit tertinggal saat menoleh cepat; blur 6% wajah tajam. Kamera belakang: kipas angin masih dianggap orang, blur kasar (belum diputuskan). Uji mode bokeh sistem: 13T tidak menawarkan bokeh/nilai F ke aplikasi lain (jalur ditutup). Bokeh dijeda untuk pengujian.
 

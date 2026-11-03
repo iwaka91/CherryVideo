@@ -7,6 +7,8 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.view.MotionEvent
 import android.view.View
+import id.tege.video.core.StampContent
+import id.tege.video.core.StampTemplate
 
 /** Face position guide (oval + eye line) inside the visible picture. Preview only; never recorded. */
 internal class GuideOverlay(context: Context, private val picture: () -> IntArray?) : View(context) {
@@ -99,11 +101,23 @@ internal class LevelMeter(context: Context) : View(context) {
 
 /** Builds the upright text layer drawn into the video: title + date (top left) and the lower third (bottom left). */
 internal object OverlayArt {
-    fun draw(width: Int, height: Int, topLine: String?, lowerTitle: String?, lowerSub: String?): Bitmap? {
-        if (topLine.isNullOrBlank() && lowerTitle.isNullOrBlank()) return null
+    fun draw(width: Int, height: Int, topLine: String?, lowerTitle: String?, lowerSub: String?,
+             stamp: StampContent? = null, stampTemplate: StampTemplate = StampTemplate.KARTU): Bitmap? {
+        val hasStamp = stamp != null && !stamp.isEmpty
+        if (topLine.isNullOrBlank() && lowerTitle.isNullOrBlank() && !hasStamp) return null
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val c = Canvas(bitmap)
         val unit = minOf(width, height).toFloat()
+        if (hasStamp) {
+            // The stamp keeps clear of the title/date line (top) and the lower third (bottom).
+            val margin = unit * .04f
+            val ceil = if (!topLine.isNullOrBlank()) height * .04f + unit * .045f * 1.3f + unit * .02f else margin
+            val floor = if (!lowerTitle.isNullOrBlank()) {
+                val boxH = unit * .06f * 1.5f + if (!lowerSub.isNullOrBlank()) unit * .04f * 1.4f else 0f
+                height * .93f - boxH - unit * .02f
+            } else height - margin
+            StampArt.draw(c, width, height, stampTemplate, stamp!!, ceil, floor)
+        }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; setShadowLayer(unit * .006f, 0f, unit * .002f, Color.argb(200, 0, 0, 0)) }
         if (!topLine.isNullOrBlank()) {
             paint.textSize = unit * .045f; paint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
