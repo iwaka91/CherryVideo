@@ -1,6 +1,7 @@
 package id.tege.video
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Address
@@ -48,6 +49,8 @@ internal class LocationSource(private val context: Context, private val io: Exec
     /** True when the phone's Location switch is on. */
     fun providerOn(): Boolean = runCatching { manager?.isLocationEnabled == true }.getOrDefault(false)
 
+    /** The permission is checked by [hasPermission] just below; lint cannot see through that helper. */
+    @SuppressLint("MissingPermission")
     @Synchronized fun start() {
         val m = manager ?: return
         if (running || !hasPermission()) return
