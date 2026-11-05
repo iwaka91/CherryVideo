@@ -21,7 +21,20 @@ Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplika
 
 **Catatan:** hasil emulator tidak membuktikan kecepatan atau kualitas Bokeh di Xiaomi 13T. Semua langkah menunggu perintah eksplisit ("Update Kode") sebelum kode diubah.
 
-## Status terbaru — 0.5.0-beta (Cap lokasi & efek snapshot) — 3 Nov 2026
+## Status terbaru — 0.5.1-beta (Cek dual kamera) — 5 Nov 2026
+
+**Latar:** Pak Guru bertanya apakah dual kamera (depan + belakang bersamaan, seperti kamera bawaan) bisa dipakai, dengan opsi bentuk sekunder (kotak, bulat, segi enam), tukar prioritas primer/sekunder atau seimbang atas-bawah, dan 5 posisi sekunder (empat pojok dan tengah). Keputusan: **cek dukungan di Xiaomi 13T dulu**; fitur dual kamera belum dibuat.
+
+**Selesai di kode (belum diuji di Xiaomi; kompilasi dan uji JVM hanya di CI):**
+- **Pengaturan → "Cek dual kamera (depan + belakang)":** hanya bertanya ke HP (tidak membuka kamera, tidak merekam). Menampilkan: didukung / terbatas / tidak didukung, kamera depan dan belakang yang boleh dipasangkan, jumlah pasangan, dan ukuran gambar terjamin bersamaan. Memerlukan Android 11 ke atas; ukuran terjamin dibaca di Android 12 ke atas.
+- Uji JVM baru `DualCameraCheckTest`. Versi 0.5.1-beta (versionCode 15). Paket dan kunci uji tidak berubah. Tidak ada izin baru.
+- Tidak diubah: semua fitur rekam, cap lokasi, efek snapshot.
+
+**Yang perlu Bapak lakukan di HP:** buka Pengaturan → Cek dual kamera, lalu laporkan teks yang tampil (atau foto layarnya). Hasil itu menentukan apakah fitur dual kamera dibuat dan berapa ukuran maksimalnya.
+
+**Catatan konsep dual kamera (belum diputuskan):** bentuk sekunder, tukar/seimbang, dan 5 posisi relatif ringan (hanya menggambar); bebannya ada di dua kamera aktif sekaligus (panas, baterai, resolusi lebih rendah). Bokeh/LUT awalnya hanya untuk kamera utama; kotak sekunder harus menghindari cap lokasi dan judul bawah.
+
+## Riwayat — 0.5.0-beta (Cap lokasi & efek snapshot) — 3 Nov 2026
 
 **Hasil uji 0.4.0-beta di Xiaomi 13T (3 Nov):** lolos (laporan Pak Guru). **Keputusan pengguna:** tambah cap lokasi dengan 8 template tata letak dan huruf; efek "snapshot" saat Foto, tanpa bunyi cekrek. Mockup: `docs/mockup/cap-lokasi-template.html` (8 template, versi menengah).
 

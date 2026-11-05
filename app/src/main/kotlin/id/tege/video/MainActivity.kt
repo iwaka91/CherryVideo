@@ -1937,6 +1937,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         check(panel,"Lampu kontinu",controls.torch,cameras.getOrNull(cameraIndex)?.characteristics?.get(C.FLASH_INFO_AVAILABLE)==true) { controls=controls.copy(torch=it);engine?.update(controls) }
         panel.addView(text("Penyimpanan: Movies/CherryVideo\n${storageLabel()}\nSaat aplikasi masuk latar atau layar dikunci, rekaman dihentikan dan disimpan. Jaga aplikasi tetap terbuka untuk merekam. Suhu berat memberi hitungan mundur 30 detik sebelum rekaman disimpan otomatis; suhu kritis dan ruang menipis menyimpan segera. Saat HP panas, rekaman baru tidak bisa dimulai sampai suhu turun.",13f,muted))
         panel.addView(button("Diagnostik perangkat & FPS","diagnostics") { showDiagnostics() },LinearLayout.LayoutParams(-1,dp(48)))
+        panel.addView(button("Cek dual kamera (depan + belakang)","dual-check") { showDualCheck() },LinearLayout.LayoutParams(-1,dp(48)).apply { topMargin=dp(5) })
         val about=button("Tentang Cherry Video","about") {}
         panel.addView(about,LinearLayout.LayoutParams(-1,dp(48)).apply { topMargin=dp(5) })
         val dialog=sheet("Pengaturan",panel)
@@ -1963,6 +1964,31 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun openLink(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url))) }.onFailure { onError("Tidak ada aplikasi pembuka tautan.") }
+    }
+    /** Only asks the phone; nothing is opened or recorded. Shows whether front and back camera may run together. */
+    private fun showDualCheck() {
+        val result=runCatching {
+            val apiOk=Build.VERSION.SDK_INT>=Build.VERSION_CODES.R
+            val manager=getSystemService(android.hardware.camera2.CameraManager::class.java)
+            val groups=if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.R && manager!=null) manager.concurrentCameraIds.map { set ->
+                set.map { id ->
+                    val ch=manager.getCameraCharacteristics(id)
+                    val facing=when(ch.get(C.LENS_FACING)) { C.LENS_FACING_BACK -> CamFacing.BACK;C.LENS_FACING_FRONT -> CamFacing.FRONT;else -> CamFacing.OTHER }
+                    var w=0;var h=0
+                    if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S) {
+                        ch.get(C.SCALER_MANDATORY_CONCURRENT_STREAM_COMBINATIONS)?.forEach { combo ->
+                            combo.streamsInformation.forEach { info ->
+                                info.availableSizes.forEach { s -> if(s.width.toLong()*s.height>w.toLong()*h) { w=s.width;h=s.height } }
+                            }
+                        }
+                    }
+                    ConcurrentCam(id,facing,w,h)
+                }
+            } else emptyList()
+            DualCameraCheck.evaluate(apiOk,packageManager.hasSystemFeature("android.hardware.camera.concurrent"),groups)
+        }
+        val text=result.map { DualCameraCheck.text(it) }.getOrElse { "Pengecekan gagal: ${it.message ?: it.javaClass.simpleName}" }
+        message("Cek dual kamera",text+"\n\nIni hanya pengecekan. Fitur dual kamera belum ada di aplikasi.")
     }
     private fun showDiagnostics() {
         val last=File(filesDir,"last-recording.json").takeIf { it.exists() }?.readText()
