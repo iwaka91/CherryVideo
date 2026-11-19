@@ -1,34 +1,42 @@
-# Cherry Video — Kamera USB (UVC) [eksperimen 0.5.2-beta]
+# Cherry Video 0.5.3-beta — USB sebagai sumber kamera (satu mesin perekaman)
 
-## Tujuan
-Menambahkan mode webcam USB OTG di APK Cherry Video **yang sama**, terutama untuk Redmi Pad 2. Tidak membuat aplikasi kedua. Mode kamera ponsel yang sudah ada tetap menggunakan Camera2/Cherry Video CameraEngine. Mode USB menggunakan **AUSBC 3.6.0** karena beberapa tablet tidak mengekspos webcam UVC melalui Camera2 API.
+## Arsitektur
+**Tidak ada aplikasi atau layar perekam kedua.** Pilihan USB/Internal ada di `MainActivity`. Frame video dari webcam UVC diterima oleh `UvcSource` melalui `MultiCameraClient` (izin/hotplug) dan `UVCCamera` (native USB/UVC), lalu masuk langsung ke **`VideoRenderer.input` milik Cherry Video**.
 
-## Penggunaan
-1. Sambungkan webcam UVC ke tablet menggunakan adaptor USB-C OTG (jika daya USB kurang, coba hub USB bertenaga).
-2. Di Cherry Video, buka **Lainnya → Kamera USB · Webcam OTG**.
-3. Setujui permintaan akses USB dari Android. Tunggu pesan webcam terhubung.
-4. Pilih **Resolusi** dari daftar yang dilaporkan webcam, misalnya 1280×720 atau 1920×1080 jika benar-benar tersedia.
-5. Tekan **Foto JPG** untuk foto atau **Rekam MP4** untuk mulai; tekan **Stop** untuk menyimpan.
-6. Hasil dipublikasikan ke **Pictures/CherryVideo** atau **Movies/CherryVideo** dan dapat dibuka lewat Galeri. Berkas sementara tidak dihapus jika publikasi gagal.
+Alur: Kamera internal Camera2 **atau** USB UVC → VideoRenderer (GPU/overlay/LUT) → SurfaceRecorder (MP4 + mikrofon/audio Cherry Video) → VideoFiles (validasi dan galeri).
 
-## Batasan teknis
-- Menggunakan jalur UVC langsung, bukan kamera virtual Android. Mode ini **tidak** membuat webcam dapat dipilih di Google Meet, Zoom, atau aplikasi sosial lain.
-- Ini adalah mode terpisah **di dalam APK yang sama**. Pengolahan Cherry Video Camera2/GL (LUT, Bokeh, Cinematic, EIS/OIS, teleprompter, cap lokasi, pause/mark) belum dihubungkan ke jalur UVC ini. Jangan klaim efek tersebut ikut masuk rekaman USB.
-- Audio menggunakan sumber **AUTO** dari AUSBC: mikrofon webcam bila tersedia, jika tidak mikrofon tablet; cek apakah mikrofon dan suara benar-benar terekam.
-- Resolusi awal 1280×720 dengan permintaan MJPEG. Pilihan lain bergantung pada daftar webcam. **Tidak mengklaim 2K/60fps sebelum diuji.**
-- Perangkat USB yang terdeteksi di laptop belum tentu berfungsi pada tablet. Perlu uji OTG, daya, izin USB, codec, audio, rotasi video, dan perekaman panjang.
-- Memerlukan dependency dari JitPack; ukuran APK meningkat akibat pustaka native. Periksa hasil Gradle dan ukuran APK sebelum menggabungkan perubahan.
+Implementasi USB **tidak** memakai `AUSBC.captureVideoStart()`, `AUSBC.captureImage()`, maupun perekam bawaan library. Kelas `UsbCameraActivity` lama dihapus.
 
-## Uji pada Redmi Pad 2
-- [ ] Aplikasi bisa dibuka tanpa webcam dan tidak crash.
-- [ ] Webcam langsung terdeteksi setelah memasang OTG dan memberi izin.
-- [ ] Preview muncul tanpa warna rusak pada posisi tablet potret dan lanskap.
-- [ ] Daftar resolusi muncul dan 720p/1080p dapat dipilih jika tersedia.
-- [ ] Foto JPG tersimpan dan dapat dibuka Galeri.
-- [ ] Video MP4 berdurasi 30 detik tersimpan, audio sinkron dan frame rate stabil.
-- [ ] Rekaman 10 menit selesai tanpa file kosong, panas berlebihan atau kegagalan USB.
-- [ ] Melepas USB menampilkan peringatan dan masuk lagi tidak crash.
-- [ ] Mode kamera internal Cherry Video tetap normal setelah kembali.
+## Cara memakai pada Redmi Pad 2
+1. Pasang webcam ke adaptor USB-C OTG, lalu hubungkan ke tablet.
+2. Buka **Cherry Video → Lainnya → Sumber kamera: USB / Internal**. Saat Android meminta izin USB, pilih izinkan.
+3. Tunggu tulisan **Siap · Webcam USB** serta preview. Jika kamera tidak menawarkan resolusi awal 1280×720, buka tombol **Kualitas** lalu pilih ukuran yang benar-benar ditawarkan webcam.
+4. Gunakan tombol rekam Cherry Video yang sama. Audio memakai pengaturan **Audio** Cherry Video. Foto, tanda waktu, jeda/lanjut, galeri, LUT dan overlay tetap melalui jalur Cherry Video.
+5. Tekan tombol **Kamera USB** di baris atas untuk kembali ke kamera internal.
 
-### Status
-Implementasi awal ditulis pada branch `feature/usb-uvc-camera`; **belum terkompilasi/teruji pada perangkat** di sesi ini. Tidak menjalankan GitHub Actions berbayar/berat secara otomatis. Gabungkan hanya setelah pemeriksaan build dan uji Redmi Pad 2.
+## Penerapan fitur
+- Jalur bersama: preview, warna/LUT, efek sinematik berbasis GPU, teks judul/lower third, cap lokasi (apabila diaktifkan), snapshot, tombol rekam, jeda/lanjut, audio dan penyimpanan MP4.
+- Perangkat USB menyediakan stream mentah ke GPU; fitur sensor Camera2 seperti ISO/shutter manual, OIS/EIS, ketuk fokus/AE-lock, zoom sensor, dan deteksi wajah **tidak otomatis tersedia** pada USB. UI pengaturan internal yang masih tampak tidak berarti webcam menerima kontrol itu.
+- Bokeh person-mask berbasis stream sekunder Camera2 belum diterapkan untuk USB; tidak boleh dianggap aktif pada hasil webcam.
+- Timestamp UVC dilatch menjadi waktu monotonic saat frame diterima agar cocok dengan `SurfaceRecorder`/audio Cherry Video.
+- Resolusi dipilih dari mode video UVC yang dilaporkan, dengan filter kemampuan encoder Android. Saat ini target rekaman **30 fps**; nilai FPS aktual hanya dapat dinilai dari file hasil dan report.
+- Pilihan HEVC/AVC masih memakai kebijakan Cherry Video. Penggunaan mic USB perlu dipilih/diperiksa berdasarkan rute input Android; keberadaan mic pada webcam tidak menjamin audio otomatis dipakai oleh perekam.
+
+## Batasan
+Kamera USB dalam Cherry Video **bukan kamera virtual** Android: Google Meet, Zoom, dan aplikasi live lain belum otomatis bisa memilih webcam tersebut. Kualitas dan kompatibilitas webcam tertentu belum diuji karena perangkat berada di kantor. Seluruh perubahan adalah **versi uji** sampai tes lapangan.
+
+## Pengujian perangkat
+- [ ] Aplikasi versi uji dapat dibuka saat tidak ada webcam.
+- [ ] Pasang USB OTG, buka sumber USB, setujui izin, lihat preview tanpa crash.
+- [ ] Uji layar potret/lanskap dan putar smartphone/tablet.
+- [ ] Cek tombol Kualitas (daftar resolusi UVC nyata); uji 720p kemudian 1080p jika tersedia.
+- [ ] Coba LUT, Cinematic, teleprompter/teks, dan foto.
+- [ ] Rekam 30 detik dengan audio; periksa MP4 di Galeri dan laporan FPS/sinkronisasi.
+- [ ] Uji jeda/lanjut, rekaman 5–10 menit, suhu, kestabilan dan ruang penyimpanan.
+- [ ] Cabut OTG setelah stop; kembali ke Internal dan rekam dengan kamera tablet.
+- [ ] Jika USB gagal, catat layar kesalahan dan ekspor Diagnostik.
+
+## Hasil build
+Branch `feature/usb-uvc-camera`. Gradle `:core:test :app:assembleDebug` **berhasil** pada GitHub Actions 19 Nov 2026 (run 44562986286). APK dipindahkan ke percakapan; **artefak build GitHub Actions telah dihapus** dan workflow sementara dibersihkan. Build bukan jaminan kompatibilitas UVC atau stabilitas hardware.
+
+SHA-256 APK: `057e2ffd2e5644a835d9b2f3dcd1764f7ae389bb5825ad0a241846b1948effd4`.
