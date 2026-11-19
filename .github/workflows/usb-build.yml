@@ -5,6 +5,10 @@ on:
     paths:
       - '.github/workflows/usb-build.yml'
       - 'docs/USB_BUILD_TRIGGER.md'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/usb-build.yml'
   workflow_dispatch:
 permissions:
   contents: read
