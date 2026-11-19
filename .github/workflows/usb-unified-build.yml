@@ -1,0 +1,46 @@
+name: Cherry Video unified UVC build (temporary)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/usb-unified-build.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Native toolchain
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
+      - name: Segmentation model
+        run: bash tools/fetch_models.sh
+      - name: Compile Cherry Video debug APK
+        run: |
+          set +e
+          bash gradlew --no-daemon :core:test :app:assembleDebug > usb-build.log 2>&1
+          code=$?
+          tail -n 120 usb-build.log
+          if [ "$code" -ne 0 ]; then
+            grep -E '(^e: |FAILED|Could not resolve|Could not find|Error: |error: |What went wrong:)' usb-build.log | head -40 || true
+          fi
+          exit "$code"
+      - name: Inspect APK
+        run: |
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          sha256sum app/build/outputs/apk/debug/app-debug.apk
+      - name: Upload APK only if build passes; delete after transfer to chat
+        uses: actions/upload-artifact@v4
+        with:
+          name: CherryVideo-0.5.3-unified-UVC-temporary
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 1
+          if-no-files-found: error
