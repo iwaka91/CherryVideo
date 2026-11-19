@@ -69,6 +69,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private lateinit var grid: GridOverlay
     private var cameras=emptyList<CameraEntry>()
     private var cameraIndex=0
+    /** USB changes only the video SOURCE; Cherry Video controls and recorder remain shared. */
+    private var usbSelected=false
+    private var usbKnownSizes=emptyList<Pair<Int,Int>>()
     private var selected=VideoProfile(1920,1080,30)
     /** Counters for diagnostics in automated tests only. */
     @Volatile internal var touchEvents=0
@@ -439,7 +442,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             addView(title,LinearLayout.LayoutParams(0,dp(46),1f));addView(proBadge,LinearLayout.LayoutParams(-2,-2))
         }
         status=text("Menyiapkan kamera…",13f,gold).apply { tag="status";maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END }
-        lens=button("Belakang","lens") { flipCamera() }.apply {
+        lens=button("Belakang","lens") { if(usbSelected) switchUsb(false) else flipCamera() }.apply {
             textSize=13f;compoundDrawablePadding=dp(4)
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_flip_camera,0,0,0)
         }
@@ -488,8 +491,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         // "Lainnya" drawer: secondary controls stay one tap away so the preview keeps most of the screen.
         panel.addView(modeSwitch,LinearLayout.LayoutParams(-1,dp(46)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
         panel.addView(row(button("Dokumentasi","doc-tools") { showDocTools() },button("Bicara","talk-tools") { showTalkTools() }))
-        panel.addView(button("Kamera USB · Webcam OTG","usb-camera") {
-            if(!locked()) startActivity(Intent(this,UsbCameraActivity::class.java))
+        panel.addView(button("Sumber kamera: USB / Internal","usb-camera") {
+            if(!locked()) switchUsb(!usbSelected)
         },LinearLayout.LayoutParams(-1,dp(46)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
         panel.addView(row(colors,stable));panel.addView(row(bokehButton,cinemaButton));panel.addView(proRow);panel.addView(row(audioButton,settings))
         val side=if(landscape) 64 else 84
@@ -580,6 +583,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
     }
     private fun rotation(): Int {
+        if(usbSelected) return 0 // USB webcam supplies landscape frames; no synthetic sensor rotation.
         val c=cameras.getOrNull(cameraIndex) ?: return 0
         @Suppress("DEPRECATION") val displayDegrees=when(windowManager.defaultDisplay.rotation) { Surface.ROTATION_90->90;Surface.ROTATION_180->180;Surface.ROTATION_270->270;else->0 }
         return if(c.front) (c.rotation+displayDegrees)%360 else (c.rotation-displayDegrees+360)%360
@@ -587,6 +591,23 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun startCamera() {
         if(!resumed || probing || engine!=null || retiringEngines>0 || !preview.holder.surface.isValid || cameras.isEmpty()) return
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) { onStatus("Berikan izin Kamera melalui Pengaturan Android untuk merekam.");return }
+        if(usbSelected) {
+            val default=VideoProfile(1280,720,30)
+            val offered=if(usbKnownSizes.isEmpty()) listOf(default) else usbKnownSizes
+                .filter { (w,h) -> w in 640..3840 && h in 480..2160 && w%2==0 && h%2==0 }
+                .map { (w,h) -> VideoProfile(w,h,30) }
+            qualityOptions=offered.filter { CodecSupport.supports(it,hevc) }.distinctBy { it.width to it.height }
+            if(qualityOptions.isEmpty()) { onError("Encoder tidak mendukung resolusi webcam USB.");return }
+            if(selected !in qualityOptions) selected=qualityOptions.firstOrNull { it.width==1280 && it.height==720 } ?: qualityOptions.first()
+            quality.text=selected.label;updateLensUi();updateZoomUi()
+            controls=Controls(stabilization=0)
+            updateSelectionLabels()
+            val e=CameraEngine(applicationContext,this);engine=e
+            e.openUsb(selected,hevc,preview.holder.surface,preview.width,preview.height)
+            applyGrade(e);applyExtras(e)
+            if(bokeh) flashNote("Bokeh orang belum tersedia pada sumber USB; LUT, judul dan audio tetap aktif.")
+            return
+        }
         val camera=cameras[cameraIndex]
         val options=camera.profiles(hevc);qualityOptions=options
         if(options.isEmpty()) { onError("Tidak ada profil video standar yang memenuhi batas kamera dan encoder.");return }
@@ -609,6 +630,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         e.update(controls);applyGrade(e);applyExtras(e)
     }
     private fun setZoom(ratio: Float) {
+        if(usbSelected) { flashNote("Zoom sensor USB belum tersedia.");return }
         val camera=cameras.getOrNull(cameraIndex) ?: return
         if(camera.zoomMax<=camera.zoomMin) { flashNote("Kamera ini tidak mendukung zoom.");return }
         if(selected.highSpeed) { flashNote("Zoom dinonaktifkan pada 60 fps high-speed. Pilih 30 fps untuk zoom.");return }
@@ -732,6 +754,12 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         }
     }
     private fun updateZoomUi() {
+        if(usbSelected) {
+            zoomButton.text="1×";zoomBadge.text="USB";zoomButton.isEnabled=false
+            zoomSeek.isEnabled=false;zoomDock.visibility=View.GONE
+            zoomChips.visibility=View.GONE
+            return
+        }
         val camera=cameras.getOrNull(cameraIndex) ?: return
         val limited=selected.highSpeed || camera.zoomMax<=camera.zoomMin
         zoomButton.text=String.format(Locale.US,"%.1f×",controls.zoom)
@@ -814,6 +842,16 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         stickyError=null;status.text=message
     }
     override fun onReady(entry: CameraEntry) { if(resumed && !isDestroyed && engine?.isReady==true) record.isEnabled=true }
+    override fun onUsbModes(modes: List<Pair<Int,Int>>) {
+        if(!usbSelected || isDestroyed) return
+        usbKnownSizes=modes
+        qualityOptions=modes.filter { (w,h) -> w in 640..3840 && h in 480..2160 && w%2==0 && h%2==0 }
+            .map { (w,h) -> VideoProfile(w,h,30) }
+            .filter { CodecSupport.supports(it,hevc) }.distinctBy { it.width to it.height }
+        if(selected !in qualityOptions)
+            flashNote("Resolusi USB ${selected.label} tidak ditawarkan. Pilih Kualitas lain.")
+        else onStatus("Webcam USB menawarkan ${qualityOptions.size} resolusi untuk perekam Cherry Video.")
+    }
     override fun onRecording(active: Boolean) {
         uiRecording=active
         if(isDestroyed) return
@@ -823,7 +861,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         record.contentDescription=if(active) "Stop rekaman" else "Mulai rekaman"
         record.isEnabled=engine?.isReady==true
         modeSwitch.isEnabled=!active;modeSwitch.alpha=if(active) .5f else 1f
-        lens.isEnabled=!active && hasBothFacings();quality.isEnabled=!active;colors.isEnabled=!active
+        lens.isEnabled=!active && (usbSelected || hasBothFacings());quality.isEnabled=!active;colors.isEnabled=!active
         bokehButton.isEnabled=!active;cinemaButton.isEnabled=!active
         if(!active) { hot.reset();hotText=null;renderBanner() }
         updateHotUi()
@@ -1403,7 +1441,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         audioMode=AudioMode.NATURAL
         prefs.edit().putInt("audio",audio).putInt("audioMode",audioMode.ordinal).apply()
         saveShootPrefs();updateSelectionLabels();applyToolViews()
-        if(cameras.getOrNull(cameraIndex)?.front==true && hasBothFacings()) flipCamera()
+        if(!usbSelected && cameras.getOrNull(cameraIndex)?.front==true && hasBothFacings()) flipCamera()
         else engine?.let { controls=controls.copy(faceDetect=false);it.update(controls);applyExtras(it) }
         flashNote("Preset Dokumentasi: kamera belakang, filter angin, tombol volume rekam, audio Natural, efek snapshot foto.")
         showDocTools()
@@ -1416,7 +1454,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(AudioProcessor.available) audioMode=AudioMode.CLEAR
         prefs.edit().putInt("audio",audio).putInt("audioMode",audioMode.ordinal).apply()
         saveShootPrefs();updateSelectionLabels();applyToolViews()
-        if(cameras.getOrNull(cameraIndex)?.front!=true && hasBothFacings()) flipCamera()
+        if(!usbSelected && cameras.getOrNull(cameraIndex)?.front!=true && hasBothFacings()) flipCamera()
         else engine?.let { applyExtras(it) }
         flashNote("Preset Bicara: kamera depan, hitung mundur 3 detik, garis bantu, kunci exposure+WB saat merekam${if(audioMode==AudioMode.CLEAR) ", Suara Jernih" else ""}.")
         showTalkTools()
@@ -1433,6 +1471,11 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     }
     private fun hasBothFacings()=cameras.any { it.front } && cameras.any { !it.front }
     private fun updateLensUi() {
+        if(usbSelected) {
+            lens.text="Kamera USB";lens.contentDescription="Kembali ke kamera internal"
+            lens.isEnabled=engine?.isRecording!=true
+            return
+        }
         val c=cameras.getOrNull(cameraIndex)
         val facing=if(c?.front==true) "Depan" else "Belakang"
         val test=c!=null && cameraIndex!=defaultIndex(c.front)
@@ -1440,8 +1483,25 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         lens.contentDescription="Balik kamera. Sekarang kamera ${facing.lowercase(Locale.US)}."
         lens.isEnabled=hasBothFacings() && engine?.isRecording!=true
     }
+    /** Switch camera source without changing Cherry Video's processing/recording controls. */
+    private fun switchUsb(value: Boolean) {
+        if(locked() || usbSelected==value) return
+        usbSelected=value
+        if(value) {
+            usbKnownSizes=emptyList();selected=VideoProfile(1280,720,30)
+            controls=Controls(stabilization=0)
+            onStatus("Menghubungkan kamera USB OTG… izinkan akses saat diminta.")
+        } else {
+            selected=VideoProfile(prefs.getInt("width",1920),prefs.getInt("height",1080),
+                prefs.getInt("fps",30),prefs.getInt("captureFps",30))
+            controls=Controls(stabilization=prefs.getInt("stabilization",-1))
+            onStatus("Kembali ke kamera internal.")
+        }
+        updateLensUi();updateZoomUi();restart()
+    }
     /** One button flips between front and back; the rear lenses are merged into the main logical camera. */
     private fun flipCamera() {
+        if(usbSelected) { flashNote("Pilih Sumber kamera untuk kembali ke internal.");return }
         if(locked()) return
         val target=cameras.getOrNull(cameraIndex)?.front!=true
         val index=defaultIndex(target)
@@ -1472,6 +1532,14 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun chooseQuality() {
         if(locked()) return
         val options=qualityOptions
+        if(usbSelected) {
+            if(options.isEmpty()) { flashNote("Menunggu daftar resolusi dari webcam USB.");return }
+            AlertDialog.Builder(this).setTitle("Resolusi USB · ${if(hevc) "HEVC" else "AVC"} · 30 fps (uji)")
+                .setSingleChoiceItems(options.map { it.label }.toTypedArray(),options.indexOf(selected)) { dialog,index ->
+                    selected=options[index];dialog.dismiss();restart()
+                }.setNegativeButton("Tutup",null).show()
+            return
+        }
         val camera=cameras.getOrNull(cameraIndex) ?: return
         AlertDialog.Builder(this).setTitle("${if(camera.front) "Depan" else "Belakang"} · ID ${camera.id} · ${if(hevc) "HEVC" else "AVC"}")
             .setSingleChoiceItems(options.map { it.label+if(it.highSpeed) " · HS (uji)" else "" }.toTypedArray(),options.indexOf(selected)) { dialog,index ->
@@ -2003,7 +2071,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             .put("zoomSelected",controls.zoom.toDouble()).put("zoomApplied",engine?.appliedZoom?.toDouble())
             .put("activePhysicalId",engine?.activePhysicalId ?: JSONObject.NULL)
             .put("physicalCameras",CameraCatalog.physicalReport(this,cameras)).put("preview",engine?.previewStats).put("bokeh",engine?.bokehInfo ?: JSONObject.NULL)
-            .put("selectedCamera",cameras.getOrNull(cameraIndex)?.id).put("selectedProfile",selected.label).put("codec",if(hevc) "HEVC" else "AVC")
+            .put("selectedCamera",if(usbSelected) engine?.usbName ?: "USB" else cameras.getOrNull(cameraIndex)?.id).put("selectedProfile",selected.label).put("codec",if(hevc) "HEVC" else "AVC")
             .put("lastRecording",last?.let { JSONObject(it) } ?: JSONObject.NULL)
             .put("lastRecordingAttempt",attempt?.let { JSONObject(it) } ?: JSONObject.NULL).toString(2)
         val panel=body()
