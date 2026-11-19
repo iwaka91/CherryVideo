@@ -61,6 +61,8 @@ interface CameraListener {
     fun onNotice(message: String) {}
     /** Recording paused (true) or continued (false). */
     fun onPaused(paused: Boolean) {}
+    /** Available USB UVC sizes; all recordings still use Cherry Video SurfaceRecorder. */
+    fun onUsbModes(modes: List<Pair<Int,Int>>) {}
 }
 
 /** Camera and recorder ownership live on one serial executor. GL owns only surfaces and grading. */
@@ -73,6 +75,9 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private var request: CaptureRequest.Builder?=null
     private var renderer: VideoRenderer?=null
     private var recorder: SurfaceRecorder?=null
+    private var uvc: UvcSource?=null
+    @Volatile var usbSource=false; private set
+    @Volatile var usbName="USB"; private set
     private var encoderSurface: Surface?=null
     private var pending: File?=null
     private var name=""
@@ -158,6 +163,52 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             } catch(e: Exception) { error(e.cause?.message ?: e.message ?: "Gagal membuka kamera.");releaseCamera() }
         }
     }
+    /**
+     * Open an external USB/UVC camera as a frame producer for the EXISTING
+     * renderer, encoder and audio pipeline. No second USB video recorder.
+     */
+    fun openUsb(p: VideoProfile,h265: Boolean,surface: Surface,w: Int,h: Int) {
+        handler.post {
+            if (closing) return@post
+            try {
+                usbSource=true;usbName="Webcam USB";profile=p;hevc=h265;orientation=0
+                check(context.checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED) {
+                    "Izin kamera belum diberikan."
+                }
+                check(CodecSupport.supports(p,h265)) { "Encoder tidak mendukung ${p.label}." }
+                // An entry is required by the legacy CameraListener/report API, not used to
+                // open a Camera2 device or to set UVC camera controls.
+                val placeholder=CameraCatalog.list(context).firstOrNull()
+                    ?: error("Kamera internal tidak tersedia untuk metadata perangkat.")
+                entry=placeholder.copy(id="usb",label="Webcam USB",logicalId=null,logicalCharacteristics=null)
+                renderer=VideoRenderer(surface,p.width,p.height,sensorRotation=0,
+                    producerMirrored=false,timestampOffsetNs=0L,outputFps=p.fps,
+                    allowTimestampFallback=true,
+                    onPreviewReady={ handler.post {
+                        if (!closing && uvc!=null && !isReady) {
+                            isReady=true
+                            ui { listener.onReady(entry);listener.onStatus("Siap · Webcam USB · ${profile.label}") }
+                        }
+                    } },onNotice={ message -> ui { listener.onNotice(message) } }) { message -> handler.post {
+                        if (!closing) { if(isRecording) stopInternal();error(message) }
+                    } }.apply { resize(w,h,0,false);snapshotRotation(0) }
+                uvc=UvcSource(context,handler,renderer!!.input,p.width,p.height,
+                    onModes={ sizes -> ui { listener.onUsbModes(sizes) } },
+                    onConnected={ label -> usbName=label;ui { listener.onStatus("Webcam terhubung: $label · menunggu gambar…") } },
+                    onFailure={ message -> isReady=false;error(message) },
+                    onDisconnected={
+                        isReady=false
+                        if(isRecording) stopInternal()
+                        error("Webcam USB terlepas. Rekaman dihentikan.")
+                    })
+                uvc!!.start()
+            } catch (e: Exception) {
+                error("Kamera USB gagal: ${e.cause?.message ?: e.message}")
+                releaseCamera()
+            }
+        }
+    }
+
     /** Live Bokeh adds a small second camera stream for the person mask; only for profiles BokehPolicy allows. */
     private fun setupBokeh(rotation: Int) {
         val why=BokehPolicy.reason(profile,entry.physical)
@@ -200,7 +251,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     /** Background picture behind people (needs Bokeh); null returns to blur. */
     fun background(bitmap: android.graphics.Bitmap?) { handler.post { runCatching { renderer?.background(bitmap) } } }
     fun zebra(enabled: Boolean) { handler.post { runCatching { renderer?.zebra(enabled) } } }
-    fun mirror(enabled: Boolean) { handler.post { mirrorPreview=enabled;runCatching { renderer?.mirror(::entry.isInitialized && entry.front && enabled) } } }
+    fun mirror(enabled: Boolean) { handler.post { mirrorPreview=enabled;runCatching { renderer?.mirror(!usbSource && ::entry.isInitialized && entry.front && enabled) } } }
     /** Luminance grid about once a second (GL thread); null stops the check. */
     fun lightCheck(listener: ((FloatArray,Int,Int)->Unit)?) { handler.post { renderer?.lightListener=listener } }
     /** Saves the next frame as a JPEG (same look as the video) in Pictures/<folder>. Result on the main thread. */
@@ -275,6 +326,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             outputs,java.util.concurrent.Executor { handler.post(it) },callback))
     }
     private fun applyControls() {
+        if(usbSource) return
         val b=request ?: return
         b.set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO)
         if(profile.highSpeed) {
@@ -385,9 +437,9 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         catch(e: Exception) { error("LUT gagal diterapkan: ${e.cause?.message ?: e.message}") }
     } }
     fun resize(w: Int,h: Int,rotation: Int) { handler.post {
-        if(!isRecording) orientation=rotation
+        if(!isRecording) orientation=if(usbSource) 0 else rotation
         maskStream?.degrees=rotation
-        runCatching { renderer?.resize(w,h,rotation,entry.front && mirrorPreview) }
+        runCatching { renderer?.resize(w,h,if(usbSource) 0 else rotation,!usbSource && entry.front && mirrorPreview) }
     } }
     fun start(audioSource: Int,audioMode: AudioMode=AudioMode.NATURAL,audioDeviceId: Int=0,recordOptions: RecordOptions=RecordOptions()) { handler.post {
         if(closing || busy || isRecording || !isReady) return@post
@@ -457,7 +509,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         if(stopped && file!=null) {
             try {
                 val report=VideoFiles.inspect(file,profile,recordAudio,orientation)
-                    .put("cameraId",entry.id).put("logicalCameraId",entry.openId).put("activePhysicalId",activePhysicalId ?: JSONObject.NULL)
+                    .put("cameraId",if(usbSource) usbName else entry.id).put("logicalCameraId",if(usbSource) "USB-UVC" else entry.openId).put("activePhysicalId",activePhysicalId ?: JSONObject.NULL)
                     .put("zoom",appliedZoom.toDouble()).put("reportedZoom",reportedZoom?.toDouble() ?: JSONObject.NULL).put("device","${Build.MANUFACTURER} ${Build.MODEL}")
                     .put("androidApi",Build.VERSION.SDK_INT).put("lutSha256",lut?.sha256 ?: JSONObject.NULL)
                     .put("look",look).put("strength",intensity.toDouble()).put("baked",bake)
@@ -481,7 +533,8 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     }
     fun amplitude(): Int = try { recorder?.maxAmplitude ?: 0 } catch(_: Exception) { 0 }
     private fun releaseCamera() {
-        isReady=false;focus.cancel();session?.close();session=null;device?.close();device=null
+        isReady=false;focus.cancel();runCatching { uvc?.close() };uvc=null
+        session?.close();session=null;device?.close();device=null
         runCatching { renderer?.close() };renderer=null
         runCatching { maskStream?.close() };maskStream=null;bokehActive=false
     }
