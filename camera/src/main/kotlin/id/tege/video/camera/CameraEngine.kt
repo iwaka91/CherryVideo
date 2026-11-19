@@ -179,7 +179,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 // An entry is required by the legacy CameraListener/report API, not used to
                 // open a Camera2 device or to set UVC camera controls.
                 val placeholder=CameraCatalog.list(context).firstOrNull()
-                    ?: error("Kamera internal tidak tersedia untuk metadata perangkat.")
+                    ?: throw IllegalStateException("Kamera internal tidak tersedia untuk metadata perangkat.")
                 entry=placeholder.copy(id="usb",label="Webcam USB",logicalId=null,logicalCharacteristics=null)
                 renderer=VideoRenderer(surface,p.width,p.height,sensorRotation=0,
                     producerMirrored=false,timestampOffsetNs=0L,outputFps=p.fps,
