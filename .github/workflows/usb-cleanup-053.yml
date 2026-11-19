@@ -1,0 +1,20 @@
+name: Delete temporary unified USB APK artifact
+on:
+  push:
+    branches: [feature/usb-uvc-camera]
+    paths:
+      - '.github/workflows/usb-cleanup-053.yml'
+permissions:
+  contents: read
+  actions: write
+jobs:
+  delete-temp-artifact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Delete build artifact already copied into conversation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/14550102970
+          echo "Deleted temporary artifact 14550102970"
