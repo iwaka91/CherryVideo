@@ -49,7 +49,7 @@ class UsbCameraActivity : CameraActivity() {
     private var starting = false
     private var saving = false
     private var lastSavedUri: Uri? = null
-    private val background = Color.rgb(16,19,21)
+    private val screenBackground = Color.rgb(16,19,21)
     private val gold = Color.rgb(230,190,127)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,7 +79,7 @@ class UsbCameraActivity : CameraActivity() {
     override fun getRootView(layoutInflater: LayoutInflater): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(background)
+            setBackgroundColor(screenBackground)
         }
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         header.addView(button("Kembali") { if (isRecording || starting || saving) {
