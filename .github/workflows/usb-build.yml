@@ -8,11 +8,16 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  issues: write
 jobs:
   build-usb:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Record build run reference in PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api repos/${{ github.repository }}/issues/1/comments -f body='USB temporary build run #${{ github.run_id }} started, commit ${{ github.sha }}.'
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -45,3 +50,8 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 1
           if-no-files-found: error
+      - name: Report run result in PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api repos/${{ github.repository }}/issues/1/comments -f body='USB temporary build run #${{ github.run_id }} finished: ${{ job.status }}; check artifact on success. No release created.'
