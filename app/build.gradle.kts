@@ -7,8 +7,8 @@ android {
         applicationId = "id.tege.video"
         minSdk = 29
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.5.2-beta"
+        versionCode = 17
+        versionName = "0.5.3-beta"
         manifestPlaceholders["appLabel"] = "Cherry Video"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -36,9 +36,6 @@ android {
 }
 dependencies {
     implementation(project(":camera"))
-    // Direct USB-host UVC access (independent from Camera2/Android's external-camera HAL).
-    implementation("com.github.ernestp.AndroidUSBCamera:libausbc:3.6.0")
-    implementation("androidx.appcompat:appcompat:1.7.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
