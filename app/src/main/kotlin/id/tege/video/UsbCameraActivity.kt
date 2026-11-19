@@ -297,7 +297,7 @@ class UsbCameraActivity : CameraActivity() {
                     lastSavedUri = saved
                     note("${if(video) "Video MP4" else "Foto JPG"} tersimpan di galeri /CherryVideo/${source.name}")
                 } else {
-                    note("Penyimpanan gagal: $"+ "{issue ?: "tidak diketahui"}. Berkas sementara tidak dihapus.")
+                    note("Penyimpanan gagal: " + (issue ?: "tidak diketahui") + ". Berkas sementara tidak dihapus.")
                 }
             }
         }.start()
