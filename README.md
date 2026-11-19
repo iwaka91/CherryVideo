@@ -1,6 +1,6 @@
 # Cherry Video
 
-**Eksperimen 0.5.2-beta:** mode **Kamera USB (webcam OTG/UVC)** pada menu Lainnya di APK yang sama, untuk preview/foto/MP4 dengan audio otomatis. Status: perlu build dan pengujian Redmi Pad 2; efek Camera2 belum berlaku pada mode USB. [Panduan dan daftar uji](docs/USB_CAMERA.md).
+**Uji 0.5.3-beta — Kamera USB terintegrasi:** sumber Internal/USB dalam UI Cherry Video yang sama. Webcam UVC mengirim gambar ke VideoRenderer; rekaman MP4, audio, LUT, overlay dan foto memakai mesin Cherry Video. Gradle build dan tes modul inti berhasil; tes langsung Redmi Pad 2 masih diperlukan. Kontrol sensor Camera2 dan Bokeh AI belum tersedia pada sumber USB. [Panduan dan daftar uji](docs/USB_CAMERA.md).
 
 Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode dan Pro Mode. Package `id.tege.video`, Android 10+, target Android 16/API 36, OpenGL ES 3.0+.
 
