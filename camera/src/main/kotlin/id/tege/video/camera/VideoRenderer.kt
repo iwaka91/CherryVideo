@@ -25,6 +25,8 @@ class VideoRenderer(
     private val producerMirrored: Boolean = false,
     timestampOffsetNs: Long = 0L,
     private val outputFps: Int = 30,
+    /** UVC native surfaces may report a missing/non-monotonic camera timestamp. */
+    private val allowTimestampFallback: Boolean = false,
     private val onPreviewReady: () -> Unit = {},
     private val onNotice: (String) -> Unit = {},
     private val onFailure: (String) -> Unit,
@@ -290,7 +292,9 @@ class VideoRenderer(
         try {
             val started=System.nanoTime()
             current(window); texture.updateTexImage(); texture.getTransformMatrix(uv)
-            val stamp=texture.timestamp
+            // Only USB: use the moment the frame was latched as a MONOTONIC timestamp.
+            // The regular Camera2 path retains its sensor timestamps untouched.
+            val stamp=if(allowTimestampFallback) System.nanoTime() else texture.timestamp
             if(stamp<=lastTimestamp) return
             lastTimestamp=stamp
             noiseSeed=(noiseSeed+1)%997
