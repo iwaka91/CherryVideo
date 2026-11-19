@@ -488,6 +488,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         // "Lainnya" drawer: secondary controls stay one tap away so the preview keeps most of the screen.
         panel.addView(modeSwitch,LinearLayout.LayoutParams(-1,dp(46)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
         panel.addView(row(button("Dokumentasi","doc-tools") { showDocTools() },button("Bicara","talk-tools") { showTalkTools() }))
+        panel.addView(button("Kamera USB · Webcam OTG","usb-camera") {
+            if(!locked()) startActivity(Intent(this,UsbCameraActivity::class.java))
+        },LinearLayout.LayoutParams(-1,dp(46)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
         panel.addView(row(colors,stable));panel.addView(row(bokehButton,cinemaButton));panel.addView(proRow);panel.addView(row(audioButton,settings))
         val side=if(landscape) 64 else 84
         val recordRow=LinearLayout(this).apply {
