@@ -274,10 +274,10 @@ class UsbCameraActivity : CameraActivity() {
                     val collection = if(video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                         else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                     uri = contentResolver.insert(collection,values)
-                        ?: error("Galeri tidak mengizinkan penulisan.")
+                        ?: throw IllegalStateException("Galeri tidak mengizinkan penulisan.")
                     contentResolver.openOutputStream(uri!!)?.use { target ->
                         source.inputStream().use { input -> input.copyTo(target) }
-                    } ?: error("Berkas keluaran tidak dapat dibuka.")
+                    } ?: throw IllegalStateException("Berkas keluaran tidak dapat dibuka.")
                     contentResolver.update(uri!!, ContentValues().apply {
                         put(MediaStore.MediaColumns.IS_PENDING,0)
                     },null,null)
