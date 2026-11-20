@@ -63,6 +63,7 @@ interface CameraListener {
     fun onPaused(paused: Boolean) {}
     /** Available USB UVC sizes; all recordings still use Cherry Video SurfaceRecorder. */
     fun onUsbModes(modes: List<Pair<Int,Int>>) {}
+    fun onUsbProfile(profile: VideoProfile) {}
 }
 
 /** Camera and recorder ownership live on one serial executor. GL owns only surfaces and grading. */
@@ -76,6 +77,9 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private var renderer: VideoRenderer?=null
     private var recorder: SurfaceRecorder?=null
     private var uvc: UvcSource?=null
+    private var usbOverlay: android.graphics.Bitmap?=null
+    private var usbBackground: android.graphics.Bitmap?=null
+    private var usbZebra=false
     @Volatile var usbSource=false; private set
     @Volatile var usbName="USB"; private set
     private var encoderSurface: Surface?=null
@@ -181,20 +185,49 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
                 val placeholder=CameraCatalog.list(context).firstOrNull()
                     ?: throw IllegalStateException("Kamera internal tidak tersedia untuk metadata perangkat.")
                 entry=placeholder.copy(id="usb",label="Webcam USB",logicalId=null,logicalCharacteristics=null)
-                renderer=VideoRenderer(surface,p.width,p.height,sensorRotation=0,
-                    producerMirrored=false,timestampOffsetNs=0L,outputFps=p.fps,
-                    allowTimestampFallback=true,
-                    onPreviewReady={ handler.post {
-                        if (!closing && uvc!=null && !isReady) {
-                            isReady=true
-                            ui { listener.onReady(entry);listener.onStatus("Siap · Webcam USB · ${profile.label}") }
-                        }
-                    } },onNotice={ message -> ui { listener.onNotice(message) } }) { message -> handler.post {
-                        if (!closing) { if(isRecording) stopInternal();error(message) }
-                    } }.apply { resize(w,h,0,false);snapshotRotation(0) }
-                uvc=UvcSource(context,handler,renderer!!.input,p.width,p.height,
+                uvc=UvcSource(context,handler,p.width,p.height,
+                    acceptsMode={ width,height ->
+                        width in 320..3840 && height in 240..2160 &&
+                            width%2==0 && height%2==0 &&
+                            CodecSupport.supports(VideoProfile(width,height,p.fps),h265)
+                    },
+                    inputForMode={ width,height ->
+                        // The UVC stream format MUST be negotiated before creating the
+                        // GL input buffer and output encoder. No stale 1280x720 assumption.
+                        profile=VideoProfile(width,height,p.fps)
+                        renderer=VideoRenderer(surface,width,height,sensorRotation=0,
+                            producerMirrored=false,timestampOffsetNs=0L,outputFps=p.fps,
+                            allowTimestampFallback=true,
+                            onPreviewReady={ handler.post {
+                                if(!closing && uvc!=null && !isReady) {
+                                    isReady=true
+                                    ui { listener.onReady(entry);listener.onStatus("Siap · Webcam USB · ${profile.label}") }
+                                }
+                            } },onNotice={ message -> ui { listener.onNotice(message) } }) { message -> handler.post {
+                                if(!closing) { if(isRecording) stopInternal();error(message) }
+                            } }.apply {
+                                resize(w,h,0,false);snapshotRotation(0)
+                                grade(lut,intensity,bake,look)
+                                effects(grain,vignette,barsOn,barsInVideo)
+                                overlay(usbOverlay)
+                                background(usbBackground)
+                                zebra(usbZebra)
+                            }
+                        ui { listener.onUsbProfile(profile) }
+                        renderer!!.input
+                    },
                     onModes={ sizes -> ui { listener.onUsbModes(sizes) } },
-                    onConnected={ label -> usbName=label;ui { listener.onStatus("Webcam terhubung: $label · menunggu gambar…") } },
+                    onConnected={ label ->
+                        usbName=label
+                        ui { listener.onStatus("Webcam terhubung: $label · menunggu gambar…") }
+                        val session=uvc
+                        handler.postDelayed({
+                            if(!closing && usbSource && !isReady && uvc===session) {
+                                error("USB-PREVIEW: Webcam dibuka, tetapi tidak ada frame selama 8 detik. Catatan ada di Diagnostik.")
+                                releaseCamera()
+                            }
+                        },8000L)
+                    },
                     onFailure={ message -> isReady=false;error(message) },
                     onDisconnected={
                         isReady=false
@@ -247,10 +280,10 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
         runCatching { renderer?.bokehLook(BokehLook.featherWidth(tuning.feather),tuning.grade,BokehLook.threshold(tuning.sensitivity),tuning.showMask) }
     }
     /** Upright text layer (title/date, lower third) on preview and video; null removes it. Can change while recording. */
-    fun overlay(bitmap: android.graphics.Bitmap?) { handler.post { runCatching { renderer?.overlay(bitmap) } } }
+    fun overlay(bitmap: android.graphics.Bitmap?) { handler.post { usbOverlay=bitmap;runCatching { renderer?.overlay(bitmap) } } }
     /** Background picture behind people (needs Bokeh); null returns to blur. */
-    fun background(bitmap: android.graphics.Bitmap?) { handler.post { runCatching { renderer?.background(bitmap) } } }
-    fun zebra(enabled: Boolean) { handler.post { runCatching { renderer?.zebra(enabled) } } }
+    fun background(bitmap: android.graphics.Bitmap?) { handler.post { usbBackground=bitmap;runCatching { renderer?.background(bitmap) } } }
+    fun zebra(enabled: Boolean) { handler.post { usbZebra=enabled;runCatching { renderer?.zebra(enabled) } } }
     fun mirror(enabled: Boolean) { handler.post { mirrorPreview=enabled;runCatching { renderer?.mirror(!usbSource && ::entry.isInitialized && entry.front && enabled) } } }
     /** Luminance grid about once a second (GL thread); null stops the check. */
     fun lightCheck(listener: ((FloatArray,Int,Int)->Unit)?) { handler.post { renderer?.lightListener=listener } }
@@ -535,7 +568,7 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
     private fun releaseCamera() {
         isReady=false;focus.cancel();runCatching { uvc?.close() };uvc=null
         session?.close();session=null;device?.close();device=null
-        runCatching { renderer?.close() };renderer=null
+        runCatching { renderer?.close() };renderer=null;usbOverlay=null;usbBackground=null
         runCatching { maskStream?.close() };maskStream=null;bokehActive=false
     }
     fun close(onClosed: ()->Unit = {}) {
