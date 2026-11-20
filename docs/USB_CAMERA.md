@@ -1,4 +1,23 @@
-# Cherry Video 0.5.3-beta — USB sebagai sumber kamera (satu mesin perekaman)
+# Cherry Video 0.5.4-beta — USB sebagai sumber kamera (satu mesin perekaman)
+
+## Hotfix 0.5.4-beta — laporan uji Xiaomi 13T (20 November 2026)
+Pengguna melaporkan bahwa webcam bekerja dengan aplikasi USB Camera, tetapi tidak menampilkan preview pada Cherry Video 0.5.3-beta; percobaan berikutnya membuat Cherry Video tertutup paksa. Pesan layar persis belum diketahui, dan logcat belum tersedia. Karena itu akar penyebab crash **belum terverifikasi**.
+
+Perubahan:
+- **Stop ganda dihapus**: pemanggilan `UVCCamera.stopPreview()` sebelum `UVCCamera.destroy()` dihilangkan, karena `destroy()` memanggil `close()` dan `stopPreview()` sendiri. Berisiko native crash ketika dibuka ulang.
+- **Negosiasi format lebih dahulu**: resolusi MJPEG/YUYV ditanyakan ke webcam dan dicek kompatibel dengan encoder. Dibuat `VideoRenderer` dengan ukuran yang benar setelah mode UVC dipilih, bukan mengunci 1280×720 sebelum USB dibuka.
+- **Status dan diagnostik**: file `usb-last-diagnostic.txt` merekam langkah USB-01 hingga USB-10 (juga error USB-OPEN), serta ditampilkan dalam menu Diagnostik dan Ekspor JSON.
+- **Timeout aman**: jika UVC berhasil dibuka tetapi tidak ada frame pertama dalam 8 detik, Cherry Video menampilkan pesan USB-PREVIEW dan melepas sumber secara terkendali, bukan terus menunggu.
+- **UI**: profil resolusi sesungguhnya dan status siap disinkronkan; pesan error lama dibersihkan setelah berhasil membuka kamera.
+- **Jalur yang dipertahankan**: kamera USB tetap hanya menjadi sumber frame untuk mesin perekam Cherry Video; tidak ada recorder AUSBC kedua.
+
+Build `:core:test :app:assembleDebug` **berhasil**, GitHub Actions run `44685366821`. SHA256 APK debug uji: `89854c046d778521a46d99d3e44c1c25361801dda66eb02640d0000a756ea083`. APK sudah disalin ke chat. Artifact APK dan workflow sementara GitHub Actions sudah dihapus.
+
+**Penting**: keberhasilan kompilasi bukan bukti pemulihan webcam Xiaomi 13T; uji langsung, pesan error spesifik dan bila perlu logcat tetap dibutuhkan. Karena crash sebelumnya, jangan berulang kali memaksa pembukaan sebelum uji versi 0.5.4.
+
+**Uji yang diminta**: tutup aplikasi USB Camera dan lepas-pasang adaptor, pasang Cherry Video Uji 0.5.4, pilih Sumber USB; jika gagal ambil screenshot status layar, beralih ke Internal, buka Lainnya → Diagnostik dan kirim Ekspor JSON (mengandung `lastUsbDiagnostic`).
+
+---
 
 ## Arsitektur
 **Tidak ada aplikasi atau layar perekam kedua.** Pilihan USB/Internal ada di `MainActivity`. Frame video dari webcam UVC diterima oleh `UvcSource` melalui `MultiCameraClient` (izin/hotplug) dan `UVCCamera` (native USB/UVC), lalu masuk langsung ke **`VideoRenderer.input` milik Cherry Video**.
