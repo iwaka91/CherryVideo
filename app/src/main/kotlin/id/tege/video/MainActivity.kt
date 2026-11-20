@@ -841,7 +841,18 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(isDestroyed || (message.startsWith("Siap") && stickyError!=null)) return
         stickyError=null;status.text=message
     }
-    override fun onReady(entry: CameraEntry) { if(resumed && !isDestroyed && engine?.isReady==true) record.isEnabled=true }
+    override fun onReady(entry: CameraEntry) {
+        if(resumed && !isDestroyed && engine?.isReady==true) {
+            stickyError=null
+            record.isEnabled=true
+        }
+    }
+    override fun onUsbProfile(profile: VideoProfile) {
+        if(!usbSelected || isDestroyed) return
+        selected=profile
+        quality.text=profile.label
+        onStatus("Resolusi USB terpilih: ${profile.label} · menunggu frame pertama…")
+    }
     override fun onUsbModes(modes: List<Pair<Int,Int>>) {
         if(!usbSelected || isDestroyed) return
         usbKnownSizes=modes
@@ -849,8 +860,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             .map { (w,h) -> VideoProfile(w,h,30) }
             .filter { CodecSupport.supports(it,hevc) }.distinctBy { it.width to it.height }
         if(selected !in qualityOptions)
-            flashNote("Resolusi USB ${selected.label} tidak ditawarkan. Pilih Kualitas lain.")
-        else onStatus("Webcam USB menawarkan ${qualityOptions.size} resolusi untuk perekam Cherry Video.")
+            onStatus("USB menawarkan ${qualityOptions.size} resolusi; Cherry Video akan memilih yang kompatibel.")
+        else onStatus("Webcam USB menawarkan ${qualityOptions.size} resolusi.")
     }
     override fun onRecording(active: Boolean) {
         uiRecording=active
@@ -2064,6 +2075,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private fun showDiagnostics() {
         val last=File(filesDir,"last-recording.json").takeIf { it.exists() }?.readText()
         val attempt=File(filesDir,"last-recording-attempt.json").takeIf { it.exists() }?.readText()
+        val usbDiagnostic=File(filesDir,"usb-last-diagnostic.txt").takeIf { it.exists() }?.readText()
         exportJson=JSONObject().put("device","${Build.MANUFACTURER} ${Build.MODEL}").put("api",Build.VERSION.SDK_INT)
             .put("version",BuildConfig.VERSION_NAME).put("cameras",JSONArray(cameras.map { it.report() }))
             .put("audioInputs",AudioInputs.catalog(this)).put("audioProcessorAvailable",AudioProcessor.available)
@@ -2073,12 +2085,16 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             .put("physicalCameras",CameraCatalog.physicalReport(this,cameras)).put("preview",engine?.previewStats).put("bokeh",engine?.bokehInfo ?: JSONObject.NULL)
             .put("selectedCamera",if(usbSelected) engine?.usbName ?: "USB" else cameras.getOrNull(cameraIndex)?.id).put("selectedProfile",selected.label).put("codec",if(hevc) "HEVC" else "AVC")
             .put("lastRecording",last?.let { JSONObject(it) } ?: JSONObject.NULL)
-            .put("lastRecordingAttempt",attempt?.let { JSONObject(it) } ?: JSONObject.NULL).toString(2)
+            .put("lastRecordingAttempt",attempt?.let { JSONObject(it) } ?: JSONObject.NULL)
+            .put("lastUsbDiagnostic",usbDiagnostic ?: JSONObject.NULL).toString(2)
         val panel=body()
         val p=engine?.previewStats ?: JSONObject()
         panel.addView(text("${Build.MANUFACTURER} ${Build.MODEL}\nAndroid API ${Build.VERSION.SDK_INT} · ${BuildConfig.VERSION_NAME}",15f,gold))
         panel.addView(text("Kamera ${cameras.getOrNull(cameraIndex)?.id} · ${selected.label} · ${if(hevc) "HEVC" else "AVC"}\n${String.format(Locale.US,"Preview %.1f fps · render %.1f ms\nJeda frame maksimum %.1f ms",p.optDouble("previewSubmittedFps",0.0),p.optDouble("averageRenderMs",0.0),p.optDouble("maxArrivalGapMs",0.0))}",14f))
         panel.addView(text("Audio: ${audioLabel()} · ${audioMode.label}\nPengolah suara: ${if(AudioProcessor.available) "tersedia" else "tidak tersedia"}\nZoom: ${String.format(Locale.US,"%.1f×",controls.zoom)}",13f))
+        if(usbDiagnostic != null) {
+            panel.addView(text("Catatan koneksi USB terbaru:\n" + usbDiagnostic.takeLast(1500),12f,muted).apply { setTextIsSelectable(true) })
+        }
         val timing=attempt?.let { runCatching { JSONObject(it).optJSONObject("recorderTiming") }.getOrNull() }
         timing?.let { panel.addView(text("Percobaan terakhir: ${it.optString("audioModeLabel")}\nInput aktif: ${it.optJSONObject("actualInput")?.optString("name") ?: "belum diverifikasi"}\nKanal: ${it.optInt("channels")} · Level masuk: ${it.optJSONArray("inputRmsDbfs")} dBFS\nLevel keluar: ${it.optJSONArray("outputRmsDbfs")} dBFS",12f,muted)) }
         val mainCamera=cameras.firstOrNull { !it.front && !it.physical }
