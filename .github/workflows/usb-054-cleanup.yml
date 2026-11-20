@@ -1,0 +1,20 @@
+name: Purge temporary CherryVideo 0.5.4 artifact
+on:
+  push:
+    branches: [feature/usb-uvc-camera]
+    paths:
+      - '.github/workflows/usb-054-cleanup.yml'
+permissions:
+  contents: read
+  actions: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Delete temporary APK already copied into chat
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/14605743789
+          echo "Temporary artifact 14605743789 deleted."
