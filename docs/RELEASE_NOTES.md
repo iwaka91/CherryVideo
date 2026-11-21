@@ -1,3 +1,28 @@
+# Catatan rilis Cherry Video
+
+## 0.5.4-beta — Hotfix kamera USB terintegrasi (20–21 November 2026)
+
+**Teknis:** USB UVC bukan perekam terpisah, tetapi sumber gambar ke `VideoRenderer` dan `SurfaceRecorder` Cherry Video. Hotfix menghapus penghentian preview native dua kali ketika menutup UVC, memilih ukuran/frame mode MJPEG atau YUYV sesuai dukungan webcam dan encoder **sebelum** membuat renderer, memperjelas status resolusi aktual, serta menambahkan catatan tahap pembukaan USB (`USB-01`–`USB-10`) di Pengaturan → Diagnostik perangkat & FPS. Versi APK uji `0.5.4-beta`, versionCode `18`; label `Cherry Video Uji`, package `id.tege.video.hotfix` (debug).
+
+**CI:** `:core:test :app:assembleDebug` berhasil (run `44685366821`). APK dibagikan lewat percakapan dan artifact sementara di GitHub dihapus. Tidak ada APK yang dikomit ke repo.
+
+**Hasil uji perangkat Xiaomi 13T, 21 November 2026 (berdasarkan laporan pengguna):**
+- Webcam USB **terhubung**, gambar **muncul di preview**, **video dapat direkam**, **audio terekam**, dan pengguna **tidak melihat lag**.
+- **Semua opsi resolusi yang ditampilkan Cherry Video dapat digunakan** menurut pengujian pengguna.
+- **LUT dan fitur lain yang dicoba berjalan baik** dengan webcam sebagai sumber gambar Cherry Video.
+- **Temuan terbuka:** resolusi lebih rendah menyebabkan *sudut pandang semakin sempit* pada **preview dan hasil video** (terlihat seperti digital crop), bukan semata perubahan detail/ketajaman. Penyebab belum diketahui; uji kesetaraan FOV antarresolusi perlu dilakukan.
+- **Belum teruji:** durasi rekaman panjang dan panas, FPS/frame drop aktual, sinkronisasi A/V terukur, Redmi Pad 2, serta setiap fitur yang belum diperiksa secara individual.
+
+**Riwayat kegagalan:** 0.5.3-beta sempat gagal menampilkan webcam lalu force close pada percobaan berikutnya. Dugaan konflik dengan aplikasi USB Camera yang mungkin masih berjalan **belum terbukti**; tidak ada logcat untuk menetapkan penyebabnya. Keberhasilan 0.5.4 tidak membuktikan secara terpisah perubahan kode mana yang menyelesaikannya.
+
+Rincian dan matriks uji: [USB_CAMERA.md](USB_CAMERA.md). Riwayat pengembangan lengkap: [DAFTAR_UPDATE.md](DAFTAR_UPDATE.md).
+
+## 0.5.3-beta — USB menjadi sumber gambar dalam mesin Cherry Video
+
+USB Camera2/USB UVC dipilih dalam UI utama; driver UVC mengirim frame ke `VideoRenderer.input` sementara perekaman, audio, LUT dan overlay tetap melalui Cherry Video. Kelas perekam USB terpisah `UsbCameraActivity` dihapus. Build berhasil, tetapi uji fisik awal pada Xiaomi 13T **gagal** (preview kosong dan crash saat dicoba lagi); diperbaiki untuk uji pada 0.5.4-beta.
+
+---
+
 Cherry Video 0.5.1 beta — cek dual kamera. Di Pengaturan ada tombol "Cek dual kamera (depan + belakang)" yang hanya bertanya ke HP apakah kamera depan dan belakang boleh berjalan bersamaan, pasangan kamera yang diizinkan, dan ukuran gambar terjamin. Ini hanya pengecekan: fitur dual kamera belum ada di aplikasi. Uji JVM baru DualCameraCheckTest. versionCode 15. Paket id.tege.video.hotfix dan kunci uji sama, sehingga seharusnya terpasang menimpa 0.5.0 beta. Semua fitur sebelumnya tidak diubah.
 
 Cherry Video 0.5.0 beta — cap lokasi dan efek snapshot. Di Lainnya → Dokumentasi ada kotak centang "Cap lokasi di video dan foto" (mati secara bawaan): nama tempat, koordinat, tanggal, dan jam ditulis di video dan foto, dengan 8 template (Polos, Kartu, Berita, Catatan, Laporan, Judul Tempat, Poster, Stempel). Template dipilih sebelum merekam dan bisa diganti saat merekam lewat tombol Cap di sisi kanan preview. Isi cap dipilih pengguna; nama kegiatan tetap punya kotak centang sendiri. Lokasi memakai layanan lokasi bawaan HP (izin lokasi diminta saat dinyalakan); nama tempat butuh internet, tanpa internet cap memakai koordinat. Aplikasi memberi peringatan bila izin belum ada, Lokasi HP mati, sinyal lemah (±N m), lokasi sudah lama, atau nama tempat tidak bisa dicari; bila posisi belum ada, cap menulis "Lokasi belum didapat". Efek snapshot saat Foto (kedip putih dan foto kecil di layar, tanpa bunyi, tidak masuk video) bisa dimatikan di panel Dokumentasi; preset Dokumentasi menghidupkan dan preset Bicara mematikannya. Uji JVM baru LocationStampTest. versionCode 14. Paket id.tege.video.hotfix dan kunci uji sama, sehingga seharusnya terpasang menimpa 0.4.0 beta. Hasil emulator tidak membuktikan ketelitian lokasi atau arah cap di Xiaomi 13T: uji di HP.
