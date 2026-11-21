@@ -31,6 +31,22 @@ Target: Xiaomi 13T 2306EPN60G, Android 16/API 36. App label TeGe Video, package 
 
 This is a small new Android application with two audited source adaptations, not a renamed full upstream fork. The repository does not claim that unintegrated candidates were tested on the Xiaomi 13T.
 
+## USB UVC source — implementation and Xiaomi 13T evidence (0.5.4-beta, 21 Nov 2026)
+
+The UVC webcam now supplies frames to Cherry Video's existing rendering/recording pipeline. `MultiCameraClient` detects and requests permission for the device, `UvcSource.kt` negotiates MJPEG/YUYV modes through native `UVCCamera`, and outputs frames to `VideoRenderer.input`. The internal Camera2 source and UVC source use the same Cherry Video `VideoRenderer → SurfaceRecorder → AudioRecord/AAC → VideoFiles` path; there is no separate USB recorder Activity. UVC frames use monotonic latch timestamps; the internal Camera2 timestamp path is unchanged.
+
+**0.5.4 hotfix:** removed redundant native `stopPreview()` before `destroy()` (which already stops the camera), negotiated webcam dimensions and codec support before creating the renderer, displayed the actual selected video profile, added USB-01…USB-10 diagnostic stages and a first-frame timeout.
+
+**Physical observation reported by user on Xiaomi 13T, 21 November 2026:** connection successful, camera picture visible, video recording successful, audio recorded, no perceptible lag. Every resolution choice displayed by Cherry Video could be used, and LUT plus other exercised creative controls worked. These are qualitative functional reports, **not** measured FPS, thermal, audio/video timestamp or long-duration performance.
+
+**Known unresolved behavior:** selecting smaller resolutions progressively **narrows the field of view** in both preview and saved MP4. User describes apparent digital cropping, not just lower detail density. Investigate whether crop originates in webcam per-mode output, the UVC stream, `SurfaceTexture` buffer transforms or renderer viewport/texture geometry. A fixed-position, fixed-scene comparison between selected resolutions is needed. Do not describe this FOV change as intended or a solved issue.
+
+**Causality uncertainty:** 0.5.3-beta initially failed to preview and force-closed after retry. An independent USB Camera app potentially holding the USB device remains a hypothesis, not confirmed. The subsequent success of 0.5.4-beta cannot isolate a single root cause. Longer takes, thermal and measured A/V sync, USB reconnect, and Redmi Pad 2 remain untested.
+
+**Build trace:** `:core:test :app:assembleDebug` passed in run `44685366821`. APK delivered via conversation; temporary Actions artifact deleted; no build APK/ZIP committed. See [USB_CAMERA.md](USB_CAMERA.md) for the field test matrix and [DAFTAR_UPDATE.md](DAFTAR_UPDATE.md) for the full history.
+
+---
+
 ## Modules and data flow
 
 - `core`: bounded .cube parser and trilinear reference sampler, focus-pull interpolation/session cancellation, normal-session video admission, encoded-timestamp cadence inspection. Pure Kotlin/JVM; deterministic unit tests.

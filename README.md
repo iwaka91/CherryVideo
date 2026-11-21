@@ -1,10 +1,12 @@
 # Cherry Video
 
+**Uji 0.5.4-beta — Kamera USB terintegrasi, berhasil pada Xiaomi 13T (21 November 2026):** webcam UVC menjadi sumber gambar bagi `VideoRenderer` dan perekam MP4/audio Cherry Video (bukan perekam USB terpisah). **Laporan pengguna:** USB terhubung, preview tampil, rekaman dan audio berhasil, tanpa lag yang terlihat; semua pilihan resolusi yang ditawarkan dapat digunakan, dan LUT serta fitur lain yang dicoba bekerja. **Masalah terbuka:** pada resolusi lebih rendah, sudut pandang menjadi lebih sempit (*cropping* terlihat pada preview sekaligus video). Rekaman panjang, FPS aktual, sinkronisasi terukur dan Redmi Pad 2 **belum diuji**. Hotfix memperbaiki risiko penutupan UVC ganda, memilih format sebelum renderer, dan menambahkan diagnostik; asal kegagalan 0.5.3-beta belum diketahui pasti. Sensor Camera2 dan Bokeh AI tidak otomatis tersedia pada USB. [Catatan uji dan langkah berikutnya](docs/USB_CAMERA.md).
+
 Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode dan Pro Mode. Package `id.tege.video`, Android 10+, target Android 16/API 36, OpenGL ES 3.0+.
 
 ![Android qualification](https://github.com/iwaka91/CherryVideo/actions/workflows/android.yml/badge.svg)
 
-[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status terbaru 0.5.1-beta (cek dual kamera).
+[Daftar update dan handoff sesi berikutnya](docs/DAFTAR_UPDATE.md) — status terbaru 0.5.4-beta (USB UVC teruji di Xiaomi 13T; cropping resolusi rendah masih perlu dianalisis).
 
 ## Update 0.3.4
 

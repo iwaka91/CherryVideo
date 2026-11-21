@@ -14,6 +14,9 @@ android {
 }
 dependencies {
     api(project(":core"))
+    // Native UVC frames enter Cherry VideoRenderer.input; no second recorder.
+    implementation("com.github.ernestp.AndroidUSBCamera:libausbc:3.6.0")
+    implementation("com.github.ernestp.AndroidUSBCamera:libuvc:3.6.0")
     // On-device person segmentation for "Uji Bokeh" (Apache License 2.0). Model is fetched by tools/fetch_models.sh.
     implementation("com.google.mediapipe:tasks-vision:0.10.14")
 }
