@@ -82,7 +82,9 @@ Kamera USB dalam Cherry Video **bukan kamera virtual** Android: Google Meet, Zoo
 - [ ] Cabut OTG setelah stop; kembali ke Internal dan rekam dengan kamera tablet.
 - [ ] Jika USB gagal, catat layar kesalahan dan ekspor Diagnostik.
 
-## Hasil build
-Branch `feature/usb-uvc-camera`. Gradle `:core:test :app:assembleDebug` **berhasil** pada GitHub Actions 19 Nov 2026 (run 44562986286). APK dipindahkan ke percakapan; **artefak build GitHub Actions telah dihapus** dan workflow sementara dibersihkan. Build bukan jaminan kompatibilitas UVC atau stabilitas hardware.
+## Bukti build dan riwayat versi
 
-SHA-256 APK: `057e2ffd2e5644a835d9b2f3dcd1764f7ae389bb5825ad0a241846b1948effd4`.
+- **0.5.4-beta (terbaru):** `:core:test :app:assembleDebug` berhasil pada GitHub Actions **20 November 2026**, run `44685366821`. SHA-256 APK uji: `89854c046d778521a46d99d3e44c1c25361801dda66eb02640d0000a756ea083`. **Uji fungsional Xiaomi 13T berhasil pada 21 November 2026** menurut laporan pengguna; uji ketahanan dan masalah FOV masih terbuka.
+- **0.5.3-beta (riwayat):** build berhasil **19 November 2026**, run `44562986286`. SHA-256 APK uji: `057e2ffd2e5644a835d9b2f3dcd1764f7ae389bb5825ad0a241846b1948effd4`. Uji webcam awal gagal pada Xiaomi 13T.
+
+APK uji diserahkan melalui percakapan. **Tidak ada APK/ZIP hasil build yang disimpan dalam commit repo**; artifact sementara dari kedua workflow telah dihapus dari GitHub Actions dan workflow sementara dibersihkan. Branch: `feature/usb-uvc-camera`, PR #1 masih draft dan belum merged ke `main`.
