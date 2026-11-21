@@ -1,6 +1,30 @@
 # Cherry Video 0.5.4-beta — USB sebagai sumber kamera (satu mesin perekaman)
 
-## Hotfix 0.5.4-beta — laporan uji Xiaomi 13T (20 November 2026)
+## Hasil uji perangkat — Xiaomi 13T, 21 November 2026
+
+**Status: uji fungsional awal BERHASIL; uji ketahanan belum dilakukan.** Laporan pengguna untuk APK **Cherry Video Uji 0.5.4-beta** (webcam eksternal UVC NEMESIS Severus A96 melalui adaptor USB OTG):
+
+| Pemeriksaan | Hasil lapangan |
+|---|---|
+| Koneksi webcam USB ke Cherry Video | **Lulus** |
+| Gambar webcam tampil di preview Cherry Video | **Lulus** |
+| Rekam video melalui tombol/mesin Cherry Video | **Lulus** |
+| Audio terekam bersama video | **Lulus** |
+| Kelancaran preview/rekaman saat uji | **Lulus secara visual** — pengguna tidak melihat lag; belum ada pengukuran FPS/frame drop |
+| Seluruh pilihan resolusi yang ditawarkan dalam Cherry Video | **Dapat digunakan menurut pengguna** |
+| LUT dan fitur kreatif Cherry Video yang dicoba | **Berfungsi menurut pengguna**; webcam diperlakukan sebagai sumber gambar pada UI dan mesin Cherry Video yang sama |
+| Rekaman panjang, panas, stabilitas, sinkronisasi A/V terukur | **Belum diuji** |
+| Pengujian di Redmi Pad 2 | **Belum dilaporkan** |
+
+**Temuan kualitas yang harus ditindaklanjuti (FOV/cropping):** pengguna mengamati bahwa **semakin kecil resolusi yang dipilih, semakin sempit sudut pandang** baik pada preview **maupun** hasil video. Seluruh resolusi bisa direkam, tetapi hasilnya tampak seperti *digital crop*, bukan sekadar perbedaan kerapatan/detail. Ini **gejala yang teramati, bukan penjelasan akar masalah**. Kemungkinan berkaitan dengan mode/rasio frame UVC, kebijakan crop webcam, atau pemetaan texture/viewport pada `VideoRenderer`; perlu perbandingan frame pada posisi kamera yang sama, resolusi berbeda, tanpa mengubah jarak/zoom. Jangan menganggap penurunan resolusi selalu menghasilkan sudut pandang lebih sempit sebagai perilaku yang diinginkan.
+
+**Riwayat kegagalan dan pemulihan:** versi 0.5.3-beta sebelumnya tidak menampilkan gambar dan pernah force close saat dicoba ulang pada Xiaomi 13T. Versi 0.5.4-beta **sudah berhasil dalam uji terbaru**. Pengguna sempat menduga aplikasi USB Camera masih aktif di latar saat kegagalan awal, tetapi belum ada logcat atau uji kontrol untuk menentukan apakah penyebabnya konflik akses, bug UVC yang diperbaiki, atau kombinasi keduanya.
+
+**Batas klaim:** keberhasilan satu sesi tidak membuktikan perekaman 5–10 menit, FPS aktual di semua pilihan resolusi, kualitas optik, sinkronisasi A/V jangka panjang, termal, atau dukungan sensor manual/UVC di semua HP. Nama fungsi kreatif yang tidak diuji secara spesifik jangan dinyatakan sudah lulus satu per satu.
+
+---
+
+## Hotfix 0.5.4-beta — laporan kegagalan awal (20 November 2026)
 Pengguna melaporkan bahwa webcam bekerja dengan aplikasi USB Camera, tetapi tidak menampilkan preview pada Cherry Video 0.5.3-beta; percobaan berikutnya membuat Cherry Video tertutup paksa. Pesan layar persis belum diketahui, dan logcat belum tersedia. Karena itu akar penyebab crash **belum terverifikasi**.
 
 Perubahan:
@@ -13,9 +37,9 @@ Perubahan:
 
 Build `:core:test :app:assembleDebug` **berhasil**, GitHub Actions run `44685366821`. SHA256 APK debug uji: `89854c046d778521a46d99d3e44c1c25361801dda66eb02640d0000a756ea083`. APK sudah disalin ke chat. Artifact APK dan workflow sementara GitHub Actions sudah dihapus.
 
-**Penting**: keberhasilan kompilasi bukan bukti pemulihan webcam Xiaomi 13T; uji langsung, pesan error spesifik dan bila perlu logcat tetap dibutuhkan. Karena crash sebelumnya, jangan berulang kali memaksa pembukaan sebelum uji versi 0.5.4.
+**Catatan historis (sebelum uji 21 November):** keberhasilan kompilasi saja memang bukan bukti pemulihan. Setelah itu, pengguna melaporkan uji fungsional 0.5.4 berhasil di Xiaomi 13T; penyebab force close versi sebelumnya tetap belum teridentifikasi melalui logcat.
 
-**Uji yang diminta**: tutup aplikasi USB Camera dan lepas-pasang adaptor, pasang Cherry Video Uji 0.5.4, pilih Sumber USB; jika gagal ambil screenshot status layar, beralih ke Internal, buka Lainnya → Pengaturan → Diagnostik perangkat & FPS dan kirim Ekspor JSON (mengandung `lastUsbDiagnostic`).
+**Prosedur pemulihan jika kegagalan terulang:** tutup aplikasi USB Camera dan lepas-pasang adaptor, buka Cherry Video Uji 0.5.4, pilih Sumber USB; jika gagal tangkap screenshot status layar, beralih ke Internal, lalu buka Lainnya → Pengaturan → Diagnostik perangkat & FPS dan ekspor JSON (mengandung `lastUsbDiagnostic`).
 
 ---
 
@@ -26,10 +50,10 @@ Alur: Kamera internal Camera2 **atau** USB UVC → VideoRenderer (GPU/overlay/LU
 
 Implementasi USB **tidak** memakai `AUSBC.captureVideoStart()`, `AUSBC.captureImage()`, maupun perekam bawaan library. Kelas `UsbCameraActivity` lama dihapus.
 
-## Cara memakai pada Redmi Pad 2
-1. Pasang webcam ke adaptor USB-C OTG, lalu hubungkan ke tablet.
+## Cara memakai (Xiaomi 13T sudah diuji, Redmi Pad 2 belum)
+1. Pasang webcam ke adaptor USB-C OTG, lalu hubungkan ke Xiaomi 13T atau tablet.
 2. Buka **Cherry Video → Lainnya → Sumber kamera: USB / Internal**. Saat Android meminta izin USB, pilih izinkan.
-3. Tunggu tulisan **Siap · Webcam USB** serta preview. Jika kamera tidak menawarkan resolusi awal 1280×720, buka tombol **Kualitas** lalu pilih ukuran yang benar-benar ditawarkan webcam.
+3. Tunggu tulisan **Siap · Webcam USB** serta preview. Tombol **Kualitas** menawarkan ukuran yang dilaporkan webcam dan didukung encoder; ingat bahwa uji Xiaomi 13T menemukan sudut pandang lebih sempit pada resolusi yang lebih kecil.
 4. Gunakan tombol rekam Cherry Video yang sama. Audio memakai pengaturan **Audio** Cherry Video. Foto, tanda waktu, jeda/lanjut, galeri, LUT dan overlay tetap melalui jalur Cherry Video.
 5. Tekan tombol **Kamera USB** di baris atas untuk kembali ke kamera internal.
 
@@ -42,15 +66,18 @@ Implementasi USB **tidak** memakai `AUSBC.captureVideoStart()`, `AUSBC.captureIm
 - Pilihan HEVC/AVC masih memakai kebijakan Cherry Video. Penggunaan mic USB perlu dipilih/diperiksa berdasarkan rute input Android; keberadaan mic pada webcam tidak menjamin audio otomatis dipakai oleh perekam.
 
 ## Batasan
-Kamera USB dalam Cherry Video **bukan kamera virtual** Android: Google Meet, Zoom, dan aplikasi live lain belum otomatis bisa memilih webcam tersebut. Kualitas dan kompatibilitas webcam tertentu belum diuji karena perangkat berada di kantor. Seluruh perubahan adalah **versi uji** sampai tes lapangan.
+Kamera USB dalam Cherry Video **bukan kamera virtual** Android: Google Meet, Zoom, dan aplikasi live lain belum otomatis bisa memilih webcam tersebut. Satu webcam eksternal berhasil diuji secara fungsional pada Xiaomi 13T (21 November 2026), tetapi uji kestabilan jangka panjang, perbandingan sudut pandang antarresolusi, dan perangkat Redmi Pad 2 belum selesai. Status tetap **beta/uji**, belum rilis stabil.
 
 ## Pengujian perangkat
 - [ ] Aplikasi versi uji dapat dibuka saat tidak ada webcam.
-- [ ] Pasang USB OTG, buka sumber USB, setujui izin, lihat preview tanpa crash.
+- [x] Pada Xiaomi 13T: USB tersambung dan preview Cherry Video muncul tanpa crash pada sesi berhasil (detail dialog izin tidak dilaporkan).
 - [ ] Uji layar potret/lanskap dan putar smartphone/tablet.
-- [ ] Cek tombol Kualitas (daftar resolusi UVC nyata); uji 720p kemudian 1080p jika tersedia.
-- [ ] Coba LUT, Cinematic, teleprompter/teks, dan foto.
-- [ ] Rekam 30 detik dengan audio; periksa MP4 di Galeri dan laporan FPS/sinkronisasi.
+- [x] Pada Xiaomi 13T: semua resolusi yang tersedia di Cherry Video dapat digunakan menurut pengguna. **Masalah terbuka:** resolusi lebih kecil menghasilkan FOV/sudut pandang lebih sempit baik di preview maupun video.
+- [ ] Bandingkan resolusi dengan objek, jarak dan posisi kamera tetap; catat resolusi, rasio aspek dan apakah crop dari webcam atau renderer.
+- [x] LUT dan fitur lain yang dicoba pengguna bekerja baik melalui sumber USB (pengguna tidak merinci hasil tiap kontrol).
+- [ ] Verifikasi secara terpisah foto, teleprompter/teks, Cinematic, dan setiap fitur khusus yang memerlukan bukti individual.
+- [x] Rekam video dan audio berhasil pada Xiaomi 13T; pengguna melaporkan tanpa lag terlihat.
+- [ ] Catat durasi sesi sebenarnya, pemeriksaan MP4 terukur, FPS aktual/frame gap dan sinkronisasi A/V.
 - [ ] Uji jeda/lanjut, rekaman 5–10 menit, suhu, kestabilan dan ruang penyimpanan.
 - [ ] Cabut OTG setelah stop; kembali ke Internal dan rekam dengan kamera tablet.
 - [ ] Jika USB gagal, catat layar kesalahan dan ekspor Diagnostik.
