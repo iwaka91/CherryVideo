@@ -1,8 +1,31 @@
 # Daftar update Cherry Video — handoff sesi berikutnya
 
-Tanggal keputusan: **25 Oktober 2026**. Basis pemeriksaan: **0.3.0-beta**, Xiaomi 13T **2306EPN60G**, Android 16 / API 36.
+## Status terbaru — 0.5.4-beta (USB menjadi sumber kamera Cherry Video) — laporan perangkat 21 November 2026
 
-Dokumen ini mencatat permintaan dan hasil pengujian pengguna. **Perubahan aplikasi di bawah belum diimplementasikan.** Pembuatan dokumen ini tidak menjadi perintah untuk langsung mengerjakan seluruh catatan. Baca ruang lingkup terbaru sebelum melanjutkan di sesi lain.
+**Hasil uji Xiaomi 13T (laporan pengguna, bukan data logcat/benchmark): BERHASIL dalam uji fungsional awal.** Webcam eksternal NEMESIS Severus A96 tersambung lewat USB OTG; gambar tampil di Cherry Video; proses rekam video berhasil; audio ikut terekam; pengguna **tidak mengamati lag**. Pengguna kemudian mengonfirmasi **semua pilihan resolusi yang tersedia dalam Cherry Video dapat digunakan** serta **LUT dan fitur lain yang dicoba berjalan baik**, sehingga webcam berfungsi sebagai sumber gambar bersama fitur Cherry Video.
+
+**Temuan kualitas terbuka:** ketika resolusi diperkecil, *field of view* (FOV) justru semakin sempit pada preview **dan video hasil**. Pengguna menggambarkannya sebagai **cropping digital**, bukan peningkatan/penurunan kerapatan saja. Belum diketahui apakah sumbernya pilihan mode UVC, aspek/crop perangkat, atau transformasi `VideoRenderer`. **Jangan menganggap ini sebagai perilaku resolusi normal tanpa investigasi.** Pengujian lanjutan perlu mengambil sampel objek tetap pada resolusi berbeda dan membandingkan area gambar yang terlihat.
+
+**Riwayat versi:** 0.5.2-beta adalah percobaan UVC dengan Activity perekam USB terpisah. Pada 0.5.3-beta, sumber USB diintegrasikan ke `VideoRenderer → SurfaceRecorder → AudioRecord/AAC → MediaStore` yang sama dengan Camera2, tetapi hasil uji awal Xiaomi 13T gagal menampilkan gambar dan percobaan ulang menutup aplikasi secara paksa. Penyebab awal belum terbukti (termasuk dugaan aplikasi USB Camera lain masih memegang webcam). **0.5.4-beta**, versionCode **18**, mengatasi risiko `stopPreview` ganda, menegosiasikan mode MJPEG/YUYV sebelum membuat renderer, serta mencatat diagnostik tahap `USB-01`…`USB-10` dan timeout preview 8 detik. Uji terbaru 0.5.4 **berhasil**.
+
+**Batas verifikasi:** hasil tanpa lag adalah **pengamatan visual**, bukan pengukuran FPS/frame drop. Audio terekam, tetapi sinkronisasi A/V secara kuantitatif belum diukur. Rekaman panjang (5–10 menit atau lebih), panas, ketahanan cabut/pasang USB, uji Redmi Pad 2, dan verifikasi satu per satu fitur kreatif yang belum disebut pengguna **masih tertunda**. Tidak ada perubahan kode baru berdasarkan laporan kali ini; tugasnya memperbarui dokumentasi.
+
+**Bukti rekayasa:** `:core:test :app:assembleDebug` sukses pada run GitHub Actions `44685366821` (20 November 2026). APK uji dipindahkan ke percakapan dan artifact build GitHub dibersihkan; tidak menyimpan APK atau ZIP pada commit repo. Dokumentasi teknis, matriks uji, dan batas dukungan: [USB_CAMERA.md](USB_CAMERA.md).
+
+### Tindak lanjut yang masih terbuka
+- [ ] Rekam panjang 5–10 menit atau lebih; amati panas, kelancaran dan sinkronisasi suara.
+- [ ] Selidiki FOV/cropping resolusi rendah melalui perbandingan posisi kamera dan target yang identik; tentukan apakah masalah di stream webcam atau transformasi shader.
+- [ ] Verifikasi FPS aktual, stabilitas rekaman, dan audio pada beberapa resolusi.
+- [ ] Uji pada Redmi Pad 2 serta pelepasan/pemasangan ulang USB.
+- [ ] Uji fungsi khusus satu per satu jika akan dinyatakan telah lulus pengujian.
+
+---
+
+## Arsip keputusan dan riwayat pengembangan sebelumnya
+
+Tanggal keputusan arsip: **25 Oktober 2026**. Basis pemeriksaan: **0.3.0-beta**, Xiaomi 13T **2306EPN60G**, Android 16 / API 36.
+
+Dokumen ini mencatat permintaan dan hasil pengujian pengguna dari beberapa versi. **Catatan rencana Oktober di bawah adalah arsip historis**, tidak boleh dibaca sebagai status terkini atau perintah untuk langsung mengimplementasikan seluruhnya. Status 0.5.4-beta terbaru tertera di bagian atas. Baca ruang lingkup terbaru sebelum melanjutkan di sesi lain.
 
 ## Rencana yang disepakati — 26 Oktober 2026 (urutan kerja)
 
