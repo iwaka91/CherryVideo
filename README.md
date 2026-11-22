@@ -45,6 +45,10 @@ Kamera **video saja** untuk Xiaomi 13T, dengan antarmuka Indonesia, Simple Mode 
 
 APK pengujian bernama **Cherry Video Uji** (`id.tege.video.hotfix`), sama dengan 0.2.1 Uji. Kunci uji CI dipertahankan; kesamaan sertifikat APK perlu diverifikasi sebelum menganggap update langsung didukung. Paket produksi tetap `id.tege.video`. Data dan berkas sementara lama tidak dihapus atau dipulihkan otomatis.
 
+## Pengembangan: Video Enhancement GPU (belum dirilis)
+
+Di cabang `feature/video-enhancement-gpu`, tersedia kode eksperimen **Peningkatan Video**: sakelar ON/OFF (bawaan OFF), preset Ringan/Seimbang/Kuat, reduksi noise spasial, penyesuaian tonal dan penajaman ringan langsung di GPU untuk preview dan video. Sementara hanya diizinkan pada profil hingga 1080p/30fps. **Belum dikompilasi atau dinyatakan lolos pengujian emulator/HP**; jangan menganggapnya sebagai versi siap pakai. Lihat [cakupan, keterbatasan dan langkah uji](docs/VIDEO_ENHANCEMENT.md).
+
 ## Fitur
 
 - 1080p30 sebagai pilihan awal; 4K30 jika kamera/encoder mendukung. 1080p60 dapat memakai sesi standar atau constrained high-speed 120+ fps dengan sampling 60 fps waktu normal. Jalur high-speed ditandai HS (uji), tanpa kontrol manual/OIS/EIS; perlu verifikasi Xiaomi. AVC/HEVC.
