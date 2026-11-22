@@ -100,6 +100,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var cinemaStrength=.7f
     private var cinemaBars=false
     private var cinemaBarsInVideo=false
+    // GPU enhancement: stored preference, OFF by default on a fresh installation.
+    private var enhancementOn=false
+    private var enhancementPreset=EnhancementPreset.SEIMBANG
     // 0.4: Dokumentasi and Bicara tools. Choices are remembered; "Mulai saat wajah terlihat" is one-shot.
     private var countdown=0
     private var prompterOn=false
@@ -169,6 +172,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
     private var batteryText: String?=null
     private lateinit var bokehButton: Button
     private lateinit var cinemaButton: Button
+    private lateinit var enhancementButton: Button
     private lateinit var banner: TextView
     private lateinit var focusRing: View
     private lateinit var lockChip: Button
@@ -243,6 +247,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         bokehPreset=BokehPreset.of(prefs.getString("bokehPreset",BokehPreset.POTRET.name))
         cinemaLook=if(prefs.getInt("cinemaLook",4)==5) 5 else 4;cinemaStrength=prefs.getFloat("cinemaStrength",.7f).coerceIn(0f,1f)
         cinemaBars=prefs.getBoolean("cinemaBars",false);cinemaBarsInVideo=prefs.getBoolean("cinemaBarsInVideo",false)
+        enhancementOn=prefs.getBoolean("videoEnhancement",false)
+        enhancementPreset=EnhancementPreset.fromName(prefs.getString("videoEnhancementPreset",null))
         loadShootPrefs()
         val stored=prefs.getString("lut",null)
         if(stored!=null) runCatching { lut=CubeLut.parse(File(filesDir,"luts/$stored.cube").readBytes());lutName=prefs.getString("lutName","LUT Saya").orEmpty() }
@@ -465,6 +471,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         stable=button("Stabilisasi","stabilization") { showStabilization() }
         bokehButton=button("Bokeh (eksperimen)","bokeh") { showBokeh() }
         cinemaButton=button("Cinematic","cinematic") { showCinema() }
+        enhancementButton=button("Peningkatan video","video-enhancement") { showEnhancement() }
         audioButton=button("Audio","audio") { showAudio() }
         val settings=button("Pengaturan","settings") { showSettings() }
         proRow=LinearLayout(this).apply {
@@ -488,7 +495,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         // "Lainnya" drawer: secondary controls stay one tap away so the preview keeps most of the screen.
         panel.addView(modeSwitch,LinearLayout.LayoutParams(-1,dp(46)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
         panel.addView(row(button("Dokumentasi","doc-tools") { showDocTools() },button("Bicara","talk-tools") { showTalkTools() }))
-        panel.addView(row(colors,stable));panel.addView(row(bokehButton,cinemaButton));panel.addView(proRow);panel.addView(row(audioButton,settings))
+        panel.addView(row(colors,stable));panel.addView(row(bokehButton,cinemaButton))
+        panel.addView(enhancementButton,LinearLayout.LayoutParams(-1,dp(48)).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) })
+        panel.addView(proRow);panel.addView(row(audioButton,settings))
         val side=if(landscape) 64 else 84
         val recordRow=LinearLayout(this).apply {
             gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(6),0,dp(2))
@@ -570,6 +579,9 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         colorTitle?.text="${gradeLabel()} · ${(strength*100).toInt()}%"
         bokehButton.text="Bokeh (eksperimen)\n${bokehState()}${if(bokeh) " · ${BokehLook.fLabel(bokehStrength)}" else ""}";bokehButton.contentDescription=bokehButton.text
         cinemaButton.text="Cinematic\n${if(cinema) "Aktif" else "Mati"}";cinemaButton.contentDescription=cinemaButton.text
+        val enhancementAllowed=EnhancementPolicy.eligible(selected.width,selected.height,selected.fps,selected.highSpeed)
+        enhancementButton.text="Peningkatan Video · ${when { !enhancementOn -> "OFF"; !enhancementAllowed -> "Tidak tersedia di profil ini"; else -> "ON (${enhancementPreset.label})" }}"
+        enhancementButton.contentDescription=enhancementButton.text
         lookButtons.forEachIndexed { index,b ->
             val active=lut==null && look==index
             b.isSelected=active;b.background=shape(if(active) gold else Color.rgb(34,42,47),10)
@@ -603,7 +615,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         if(bokeh && !useBokeh) BokehPolicy.reason(selected,camera.physical)?.let { flashNote(it) }
         e.open(camera,selected,hevc,preview.holder.surface,preview.width,preview.height,rotation(),useBokeh,bokehStrength,bokehTuning())
         controls=controls.copy(faceDetect=autoFace,lowLight=lowLight)
-        e.update(controls);applyGrade(e);applyExtras(e)
+        e.update(controls);applyGrade(e);applyEnhancement(e);applyExtras(e)
     }
     private fun setZoom(ratio: Float) {
         val camera=cameras.getOrNull(cameraIndex) ?: return
@@ -821,7 +833,7 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
         record.isEnabled=engine?.isReady==true
         modeSwitch.isEnabled=!active;modeSwitch.alpha=if(active) .5f else 1f
         lens.isEnabled=!active && hasBothFacings();quality.isEnabled=!active;colors.isEnabled=!active
-        bokehButton.isEnabled=!active;cinemaButton.isEnabled=!active
+        bokehButton.isEnabled=!active;cinemaButton.isEnabled=!active;enhancementButton.isEnabled=!active
         if(!active) { hot.reset();hotText=null;renderBanner() }
         updateHotUi()
         if(active) onStatus("Merekam · ${selected.label} · ${if(bake || cinema) "warna tersimpan" else "LUT pratinjau"}")
@@ -1508,6 +1520,53 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             e.effects(0f,0f,false,false)
         }
     }
+    private fun enhancementReason(): String? =
+        EnhancementPolicy.reason(selected.width,selected.height,selected.fps,selected.highSpeed)
+
+    private fun applyEnhancement(target: CameraEngine?=engine) {
+        target?.enhance(enhancementOn,enhancementPreset)
+    }
+    private fun persistEnhancement() {
+        prefs.edit().putBoolean("videoEnhancement",enhancementOn)
+            .putString("videoEnhancementPreset",enhancementPreset.name).apply()
+        applyEnhancement()
+        updateSelectionLabels()
+    }
+    private fun showEnhancement() {
+        if(locked()) return
+        val why=enhancementReason()
+        val panel=body()
+        panel.tag="video-enhancement-dock"
+        panel.addView(dockHeader("Peningkatan Video (uji)","video-enhancement-title","close-video-enhancement"))
+        check(panel,"Aktifkan peningkatan video",enhancementOn && why==null,why==null) { value ->
+            enhancementOn=value
+            persistEnhancement()
+            flashNote(if(value) "Peningkatan video aktif: ${enhancementPreset.label}" else "Peningkatan video OFF")
+        }
+        panel.addView(text("Intensitas",14f,gold))
+        val buttons=ArrayList<Pair<EnhancementPreset,Button>>()
+        fun refresh() { buttons.forEach { (preset,button) ->
+            val active=enhancementPreset==preset
+            button.background=shape(if(active) gold else Color.rgb(34,42,47),10)
+            button.setTextColor(if(active) Color.rgb(16,19,21) else Color.WHITE)
+        } }
+        val choices=LinearLayout(this)
+        EnhancementPreset.entries.forEach { preset ->
+            val b=button(preset.label,"enhance-${preset.name.lowercase(Locale.US)}") {
+                enhancementPreset=preset
+                persistEnhancement()
+                refresh()
+            }
+            buttons.add(preset to b)
+            choices.addView(b,LinearLayout.LayoutParams(0,dp(42),1f).apply { rightMargin=dp(4) })
+        }
+        refresh()
+        panel.addView(choices)
+        panel.addView(text(why ?: "GPU memproses noise, kontras tonal, dan detail pada preview serta hasil rekaman. OFF mengembalikan gambar asli. Berlaku untuk kamera internal dan USB bila memakai jalur GPU Cherry. Tidak menggunakan AI upscaling atau temporal denoise multi-frame.",12f,muted))
+        panel.addView(text("Bawaan OFF. Gunakan Seimbang terlebih dahulu. Bandingkan video dengan OFF pada lokasi dan pencahayaan yang sama; perhatikan penurunan FPS atau suhu.",12f,muted))
+        openDock(panel)
+    }
+
     private fun bokehReason(): String? {
         val camera=cameras.getOrNull(cameraIndex) ?: return "Kamera belum siap."
         return BokehPolicy.reason(selected,camera.physical)
@@ -2001,6 +2060,8 @@ class MainActivity : Activity(), CameraListener, SurfaceHolder.Callback {
             .put("activePhysicalId",engine?.activePhysicalId ?: JSONObject.NULL)
             .put("physicalCameras",CameraCatalog.physicalReport(this,cameras)).put("preview",engine?.previewStats).put("bokeh",engine?.bokehInfo ?: JSONObject.NULL)
             .put("selectedCamera",cameras.getOrNull(cameraIndex)?.id).put("selectedProfile",selected.label).put("codec",if(hevc) "HEVC" else "AVC")
+            .put("videoEnhancementRequested",enhancementOn).put("videoEnhancementPreset",enhancementPreset.name)
+            .put("videoEnhancementAllowed",enhancementReason()==null)
             .put("lastRecording",last?.let { JSONObject(it) } ?: JSONObject.NULL)
             .put("lastRecordingAttempt",attempt?.let { JSONObject(it) } ?: JSONObject.NULL).toString(2)
         val panel=body()

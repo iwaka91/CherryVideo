@@ -36,6 +36,7 @@ import id.tege.video.camera.TextureGeometry
 import id.tege.video.camera.SurfaceRecorder
 import id.tege.video.core.AudioMode
 import id.tege.video.core.CubeLut
+import id.tege.video.core.EnhancementPreset
 import id.tege.video.core.VideoProfile
 import org.junit.Assert.*
 import org.junit.Before
@@ -448,6 +449,50 @@ class QualificationTest {
             tap(activity,"lens")
             await("Back camera did not reopen: ${activity.engine?.lastError}") { activity.engine?.isReady==true && activity.engine?.entry?.front==false }
             assertEquals("back",context.getSharedPreferences("tege",0).getString("facing",null))
+        }
+    }
+    @Test fun enhancementShaderTogglesWithoutModifyingDefaultColor() {
+        val reader=ImageReader.newInstance(320,240,PixelFormat.RGBA_8888,4)
+        reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() },Handler(Looper.getMainLooper()))
+        var failure: String?=null
+        val renderer=VideoRenderer(reader.surface,320,240) { failure=it }
+        try {
+            renderer.resize(320,240,0,false)
+            fun feed(): IntArray {
+                val canvas=renderer.input.lockCanvas(null)
+                canvas.drawColor(Color.rgb(18,28,48))
+                renderer.input.unlockCanvasAndPost(canvas)
+                Thread.sleep(220)
+                return renderer.centerPixel()
+            }
+            renderer.enhance(false,EnhancementPreset.SEIMBANG)
+            val original=feed()
+            renderer.enhance(true,EnhancementPreset.KUAT)
+            val enhanced=feed()
+            renderer.enhance(false,EnhancementPreset.KUAT)
+            val restored=feed()
+            assertNull("GPU enhancement shader failed",failure)
+            assertTrue("Enhancement must change shadow tonality: off=${original.toList()} on=${enhanced.toList()}",
+                (0..2).sumOf { kotlin.math.abs(enhanced[it]-original[it]) }>1)
+            assertTrue("OFF must restore default pixels: off=${original.toList()} restored=${restored.toList()}",
+                (0..2).all { kotlin.math.abs(restored[it]-original[it]) < 6 })
+        } finally { renderer.close();reader.close() }
+    }
+    @Test fun enhancementUiDefaultsOffAndStoresPreset() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var activity: MainActivity;scenario.onActivity { activity=it }
+            await("Camera not ready") { activity.engine?.isReady==true }
+            val prefs=context.getSharedPreferences("tege",0)
+            assertFalse(prefs.getBoolean("videoEnhancement",false))
+            tap(activity,"video-enhancement")
+            UiDevice.getInstance(instrumentation).findObject(UiSelector().text("Aktifkan peningkatan video")).click()
+            await("Enhancement switch did not persist") { prefs.getBoolean("videoEnhancement",false) }
+            tap(activity,"enhance-kuat")
+            await("Enhancement preset not saved") { prefs.getString("videoEnhancementPreset",null)=="KUAT" }
+            tap(activity,"close-video-enhancement")
+            scenario.onActivity {
+                assertTrue(it.window.decorView.findViewWithTag<Button>("video-enhancement").text.contains("ON"))
+            }
         }
     }
     @Test fun cinematicLooksCompileOnGpuAndChangeColors() {

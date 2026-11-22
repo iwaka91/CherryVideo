@@ -8,6 +8,7 @@ import android.os.HandlerThread
 import android.view.Surface
 import id.tege.video.core.CinematicMath
 import id.tege.video.core.CubeLut
+import id.tege.video.core.EnhancementPreset
 import id.tege.video.core.FrameClock
 import id.tege.video.core.FrameGate
 import org.json.JSONObject
@@ -98,6 +99,8 @@ class VideoRenderer(
     private var strength=1f
     private var bake=true
     private var look=0
+    private var enhancementEnabled=false
+    private var enhancementPreset=EnhancementPreset.SEIMBANG
     private var lastTimestamp=0L
     private val frameClock=FrameClock(timestampOffsetNs)
     private var encoderGate=FrameGate(outputFps)
@@ -238,6 +241,15 @@ class VideoRenderer(
         if(value?.sha256!=lut?.sha256) { if(value==null) uploadIdentity() else uploadCube(value.size,value.values) }
         lut=value;strength=intensity.coerceIn(0f,1f);bake=recordLut;look=builtIn
     } }
+    /**
+     * Single-pass, edge-aware noise reduction + luminance-adaptive tone and conservative
+     * detail enhancement. Shared between preview, encoded video, and snapshots.
+     * A no-op for the original shader when disabled.
+     */
+    fun enhance(enabled: Boolean, preset: EnhancementPreset) { sync {
+        enhancementEnabled=enabled
+        enhancementPreset=preset
+    } }
     /** Live Bokeh on/off and blur strength (0..1). The caller supplies masks through [submitMask]. */
     fun bokeh(enabled: Boolean, strength: Float) { sync {
         bokehOn=enabled;bokehStrength=strength.coerceIn(0f,1f)
@@ -329,7 +341,8 @@ class VideoRenderer(
                         .put("sensorRotation",sensorRotation).put("relativeRotation",rotation).put("mirroredPreview",mirrored)
                         .put("producerMatrix",org.json.JSONArray(uv.map { it.toDouble() }))
                         .put("cameraTimestampAgeMs",(System.nanoTime()-frameClock.monotonic(stamp))/1_000_000.0)
-                        .put("clock","MONOTONIC").put("scope","Frame submission timing; photon-to-photon latency not measured")
+                        .put("clock","MONOTONIC").put("enhancement",if(enhancementEnabled) enhancementPreset.name else "OFF")
+                        .put("scope","Frame submission timing; photon-to-photon latency not measured")
                     statsStart=started;statsFrames=1;statsRenderNs=0L;statsMaxGapNs=0L
                 }
             }
@@ -394,6 +407,11 @@ class VideoRenderer(
             else if(turns%2==1) sourceHeight.toFloat()/sourceWidth else sourceWidth.toFloat()/sourceHeight
         if(bgAspect>shown) GLES30.glUniform2f(loc("uBgScale"),shown/bgAspect,1f) else GLES30.glUniform2f(loc("uBgScale"),1f,bgAspect/shown)
         GLES30.glUniform1i(loc("uZebra"),if(isPreview && zebra) 1 else 0)
+        GLES30.glUniform1i(loc("uEnhance"),if(enhancementEnabled) 1 else 0)
+        GLES30.glUniform2f(loc("uCameraTexel"),1f/sourceWidth,1f/sourceHeight)
+        GLES30.glUniform1f(loc("uDenoise"),enhancementPreset.denoise)
+        GLES30.glUniform1f(loc("uTone"),enhancementPreset.tone)
+        GLES30.glUniform1f(loc("uDetail"),enhancementPreset.detail)
         drawQuad(); checkGl()
         if(fbo!=0) GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER,0)
     }
@@ -593,6 +611,8 @@ class VideoRenderer(
             uniform int uBars; uniform int uBarAxis; uniform float uBarVisible;
             uniform highp sampler2D uOverlay; uniform int uUseOverlay; uniform int uDispRot;
             uniform highp sampler2D uBgImage; uniform int uBgMode; uniform vec2 uBgScale; uniform int uZebra;
+            uniform int uEnhance; uniform vec2 uCameraTexel;
+            uniform float uDenoise; uniform float uTone; uniform float uDetail;
             in vec2 vUv; in vec2 vPos; out vec4 color;
             // Point of the upright picture (0..1, y down) the viewer sees at this fragment.
             vec2 dispUv(){
@@ -603,6 +623,32 @@ class VideoRenderer(
                 return b;
             }
             float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+            // Spatial-only SDR enhancement: 5 texture reads, no extra FBO, history,
+            // frame copying, sensor RAW, or changes to audio/video timestamps.
+            vec3 enhanceFrame(vec2 uv, vec3 raw) {
+                vec2 d=uCameraTexel;
+                vec3 n=texture(uCamera,clamp(uv+vec2(0.,d.y),0.,1.)).rgb;
+                vec3 s=texture(uCamera,clamp(uv-vec2(0.,d.y),0.,1.)).rgb;
+                vec3 e=texture(uCamera,clamp(uv+vec2(d.x,0.),0.,1.)).rgb;
+                vec3 w=texture(uCamera,clamp(uv-vec2(d.x,0.),0.,1.)).rgb;
+                // Suppress isolated pixel noise while preserving strong edges.
+                float wn=1./(1.+60.*dot(n-raw,n-raw));
+                float ws=1./(1.+60.*dot(s-raw,s-raw));
+                float we=1./(1.+60.*dot(e-raw,e-raw));
+                float ww=1./(1.+60.*dot(w-raw,w-raw));
+                vec3 filtered=(raw*1.5+n*wn+s*ws+e*we+w*ww)/(1.5+wn+ws+we+ww);
+                vec3 clean=mix(raw,filtered,uDenoise);
+                // Tonal adaptation compresses extremes without claiming lost
+                // clipped highlights can be restored.
+                const vec3 Y=vec3(.2126,.7152,.0722);
+                vec3 neighbourhood=(n+s+e+w)*.25;
+                float l=dot(clean,Y);
+                float surround=dot(neighbourhood,Y);
+                float adjustment=(.5-l)*.4+(l-surround)*.2;
+                vec3 toned=clamp(clean+clean*(1.-clean)*(adjustment*uTone),0.,1.);
+                // Subtle unsharp detail, limited to avoid visible halos.
+                return clamp(toned+(toned-neighbourhood)*(.28*uDetail),0.,1.);
+            }
             // Mask refined with the full-resolution picture: neighbours that look like the centre pixel count more,
             // so the edge follows hair and shoulders instead of the small mask's blocky outline. Only done near an edge.
             float refinedMask(vec2 uv,vec3 c0){
@@ -621,6 +667,7 @@ class VideoRenderer(
             }
             void main(){
                 vec3 src=texture(uCamera,vUv).rgb;
+                if(uEnhance==1) src=enhanceFrame(vUv,src);
                 float person=0.;
                 if(uBokeh==1){
                     float raw=refinedMask(vUv,src);

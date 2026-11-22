@@ -379,6 +379,17 @@ class CameraEngine(private val context: Context, private val listener: CameraLis
             if(!step.finished) handler.postDelayed(this,33)
         } };tick.run()
     } }
+    /**
+     * Applies the same GPU enhancement to preview, recording and video-derived photos.
+     * The renderer uses no additional camera streams; the existing codec/audio path stays intact.
+     * Changes are restricted to idle camera state, as with LUT/Cinematic settings.
+     */
+    fun enhance(enabled: Boolean, preset: EnhancementPreset) { handler.post {
+        if(isRecording || busy) return@post
+        val allowed=::profile.isInitialized && EnhancementPolicy.eligible(profile.width,profile.height,profile.fps,profile.highSpeed)
+        runCatching { renderer?.enhance(enabled && allowed,preset) }
+            .onFailure { failure -> ui { listener.onNotice("Enhancement gagal: ${failure.message}") } }
+    } }
     fun grade(value: CubeLut?,strength: Float,recordLut: Boolean,builtIn: Int) { handler.post {
         if(isRecording || busy) return@post
         try { renderer?.grade(value,strength,recordLut,builtIn);lut=value;intensity=strength;bake=recordLut;look=builtIn }
